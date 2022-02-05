@@ -39,6 +39,8 @@
 
 #include <asm/unaligned.h>
 
+#include <linux/ptp_classify.h>
+
 #include "bcmgenet.h"
 
 /* Maximum number of hardware queues, downsized if needed */
@@ -70,6 +72,47 @@ static void bcmgenet_set_rx_mode(struct net_device *dev);
 static bool skip_umac_reset = false;
 module_param(skip_umac_reset, bool, 0444);
 MODULE_PARM_DESC(skip_umac_reset, "Skip UMAC reset step");
+
+//Kyle - There are still other edits not diffed into this because I can not tell what is new, what is old.
+
+static inline int Needs_TX_Time_Stamp(struct sk_buff *skb)
+{
+	struct ethhdr *eth_header = eth_hdr(skb);
+	if(eth_header->h_proto == 0xf788)
+	{ 
+		int type = PTP_CLASS_V2_L2;
+		struct ptp_header *hdr = ptp_parse_header(skb, type);
+		if(hdr != NULL)
+		{
+			//Kyle - should only time stamp SYNC_MESSAGE(0) and PATH_DELAY_RESP_MESSAGE(3)
+			if( ((hdr->tsmt & 0x0f) == 0) || ((hdr->tsmt & 0x0f) == 3) )
+			{ return 1; }
+		}		
+	}
+
+	return 0;
+}
+
+static inline void skb_tx_timestamp_local(struct sk_buff *skb)
+{
+	if( skb->dev != NULL && skb->dev->phydev != NULL && skb->dev->phydev->mii_ts != NULL )
+	{ 
+		if(Needs_TX_Time_Stamp(skb))
+		{			
+			struct mii_timestamper *mii_ts = skb->dev->phydev->mii_ts;
+			struct sk_buff *clone = skb_clone_sk(skb);
+			if (clone == NULL)
+			{ return; }
+		
+			//Kyle - type = 2 needs to be fixed.
+			int type = 2;
+			mii_ts->txtstamp(mii_ts, clone, type);
+		}
+	}
+	
+	if (skb_shinfo(skb)->tx_flags & SKBTX_SW_TSTAMP)
+	{ skb_tstamp_tx(skb, NULL); }
+}
 
 static inline void bcmgenet_writel(u32 value, void __iomem *offset)
 {
@@ -2096,7 +2139,10 @@ static netdev_tx_t bcmgenet_xmit(struct sk_buff *skb, struct net_device *dev)
 	}
 
 	GENET_CB(skb)->last_cb = tx_cb_ptr;
-	skb_tx_timestamp(skb);
+	
+	//Kyle - Use local version above to avoid "classify-ing" problem in kernel.
+	skb_tx_timestamp_local(skb);
+	//skb_tx_timestamp(skb);
 
 	/* Decrement total BD count and advance our write pointer */
 	ring->free_bds -= nr_frags + 1;
