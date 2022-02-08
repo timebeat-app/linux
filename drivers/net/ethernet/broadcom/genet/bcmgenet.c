@@ -73,20 +73,28 @@ static bool skip_umac_reset = false;
 module_param(skip_umac_reset, bool, 0444);
 MODULE_PARM_DESC(skip_umac_reset, "Skip UMAC reset step");
 
-//Kyle - There are still other edits not diffed into this because I can not tell what is new, what is old.
+//Kyle - These functions determine if incoming packets/skbs need to be passed to the phy driver for timestamping.
+//		 The main kernel code provides the function skb_tx_timestamp() function, which uses 
+//		 ptp_classify_raw() (/net/core/ptp_classifier.c) to do this, but there seems to be a glitch in ptp_classify_raw.
+//		 Even if that function worked correctly, it doesn't sort PTP SYNC/PDRQ messages from other messages. My solution
+//		 is to provide a local version of the kernel skb_tx_timestamp() function so that we can classify packets ourselves
+//		 and make sure they get passed to the phy driver.
 
-static inline int Needs_TX_Time_Stamp(struct sk_buff *skb)
+//Kyle - the issue with ptp_classify_raw() may be resolved with the skb->data/skb->mac fix. Should retest this.  Still need to filter specific message_types.
+
+static inline int classify_ptp_raw_local(struct sk_buff *skb)
 {
 	struct ethhdr *eth_header = eth_hdr(skb);
 	if(eth_header->h_proto == 0xf788)
 	{ 
 		int type = PTP_CLASS_V2_L2;
-		struct ptp_header *hdr = ptp_parse_header(skb, type);
+		struct ptp_header *hdr = ptp_parse_header(skb, PTP_CLASS_V2_L2);
 		if(hdr != NULL)
 		{
-			//Kyle - should only time stamp SYNC_MESSAGE(0) and PATH_DELAY_RESP_MESSAGE(3)
-			if( ((hdr->tsmt & 0x0f) == 0) || ((hdr->tsmt & 0x0f) == 3) )
-			{ return 1; }
+			//K.J. - should only time stamp SYNC_MESSAGE(0), PATH_DELAY_REQ_MESSAGE(2), and PATH_DELAY_RESP_MESSAGE(3)
+			//Kyle - should differentiate between PTP_CLASS_V2 & PTP_CLASS_V1, but PTP_CLASS_V2 is most likely
+			if( ((hdr->tsmt & 0x0f) == 0) || ((hdr->tsmt & 0x0f) == 2) || ((hdr->tsmt & 0x0f) == 3) )
+			{ return PTP_CLASS_V2_L2; }
 		}		
 	}
 
@@ -95,18 +103,36 @@ static inline int Needs_TX_Time_Stamp(struct sk_buff *skb)
 
 static inline void skb_tx_timestamp_local(struct sk_buff *skb)
 {
+
 	if( skb->dev != NULL && skb->dev->phydev != NULL && skb->dev->phydev->mii_ts != NULL )
 	{ 
-		if(Needs_TX_Time_Stamp(skb))
-		{			
+		int type = classify_ptp_raw_local(skb);
+		if(type != 0)
+		{
+			skb_shinfo(skb)->tx_flags |= SKBTX_IN_PROGRESS;
+	
 			struct mii_timestamper *mii_ts = skb->dev->phydev->mii_ts;
 			struct sk_buff *clone = skb_clone_sk(skb);
 			if (clone == NULL)
 			{ return; }
-		
-			//Kyle - type = 2 needs to be fixed.
-			int type = 2;
+			
+			//K.J. - we need to make sure that the skb->data == skb->mac pointer before we send it back
+			//		 up the error queue. Other applications like gptp use the original packet data to 
+			//		 match sent packets with their timestamps. The bcmgenet driver may do skb_push and skb_pull
+			//	 	 operations that move the data ptr away from the mac ptr.  
+			//		 Applications that call	recvmsg(socket_id, &message_header, MSG_ERRQUEUE); to retreive timestamps
+			//		 will receive a copy of what skb->data points to as a copy of the "original packet data".  But the
+			//		 "original packet data" is really what skb->mac points to. The solution is to clone the skb and set
+			//		 skb->data back to skb->mac so that the application receives the proper start of the "original packet data".
+			
+			
+			int mac_offset = skb_mac_offset(clone);
+			skb_pull(clone, mac_offset);		
+			///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+			
+			
 			mii_ts->txtstamp(mii_ts, clone, type);
+			return;
 		}
 	}
 	

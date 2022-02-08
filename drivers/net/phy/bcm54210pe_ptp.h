@@ -4,7 +4,7 @@
  *
  * PTP for BCM54210PE header file
  *
- * Authors: Carlos Fernandez
+ * Authors: Carlos Fernandez, Kyle Judd
  * License: GPL
  * Copyright (C) 2021 Technica-Electronics GmbH
  */
@@ -34,6 +34,8 @@ struct bcm54210pe_fifo_item
 	u16 port_number;
 	
 	u64 time_stamp;	
+	
+	int is_valid;
 };
 
 
@@ -46,12 +48,21 @@ struct bcm54210pe_private {
 	bool one_step;
 	struct sk_buff_head tx_queue;
 	
-	struct list_head tx_fifo;
-	struct bcm54210pe_fifo_item ts_tx_data[MAX_POOL_SIZE];
-	struct list_head rx_fifo_pdrq;
-	struct bcm54210pe_fifo_item ts_rx_data_pdrq[MAX_POOL_SIZE];
+	struct list_head tx_fifo_sync;
+	struct list_head tx_fifo_pd_request;
+	struct list_head tx_fifo_pd_response;
+	
 	struct list_head rx_fifo_sync;
+	struct list_head rx_fifo_pd_request;
+	struct list_head rx_fifo_pd_response;
+	
+	struct bcm54210pe_fifo_item ts_tx_data_sync[MAX_POOL_SIZE];
+	struct bcm54210pe_fifo_item ts_tx_data_pd_request[MAX_POOL_SIZE];	
+	struct bcm54210pe_fifo_item ts_tx_data_pd_response[MAX_POOL_SIZE];
+		
 	struct bcm54210pe_fifo_item ts_rx_data_sync[MAX_POOL_SIZE];
+	struct bcm54210pe_fifo_item ts_rx_data_pd_request[MAX_POOL_SIZE];	
+	struct bcm54210pe_fifo_item ts_rx_data_pd_response[MAX_POOL_SIZE];
 	
 	struct work_struct txts_work;
 	struct work_struct fifo_read_work;
