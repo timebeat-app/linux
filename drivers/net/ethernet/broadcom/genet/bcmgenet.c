@@ -73,7 +73,7 @@ static bool skip_umac_reset = false;
 module_param(skip_umac_reset, bool, 0444);
 MODULE_PARM_DESC(skip_umac_reset, "Skip UMAC reset step");
 
-//Kyle - These functions determine if incoming packets/skbs need to be passed to the phy driver for timestamping.
+//Kyle - These functions determine if incoming packets/skbs need to be passed to the phy driver for timestamping-MATCHING.
 //		 The main kernel code provides the function skb_tx_timestamp() function, which uses 
 //		 ptp_classify_raw() (/net/core/ptp_classifier.c) to do this, but there seems to be a glitch in ptp_classify_raw.
 //		 Even if that function worked correctly, it doesn't sort PTP SYNC/PDRQ messages from other messages. My solution
@@ -93,7 +93,9 @@ static inline int classify_ptp_raw_local(struct sk_buff *skb)
 		{
 			//K.J. - should only time stamp SYNC_MESSAGE(0), PATH_DELAY_REQ_MESSAGE(2), and PATH_DELAY_RESP_MESSAGE(3)
 			//Kyle - should differentiate between PTP_CLASS_V2 & PTP_CLASS_V1, but PTP_CLASS_V2 is most likely
-			if( ((hdr->tsmt & 0x0f) == 0) || ((hdr->tsmt & 0x0f) == 2) || ((hdr->tsmt & 0x0f) == 3) )
+			
+			//if( ((hdr->tsmt & 0x0f) == 0) || ((hdr->tsmt & 0x0f) == 2) || ((hdr->tsmt & 0x0f) == 3) )
+			if( (hdr->tsmt & 0x0f) < 4 )
 			{ return PTP_CLASS_V2_L2; }
 		}		
 	}
@@ -2074,6 +2076,23 @@ static netdev_tx_t bcmgenet_xmit(struct sk_buff *skb, struct net_device *dev)
 	int ret;
 	int i;
 
+	//Kyle - This is a hack to fix issue where PHY is not timestamping version 2.1+ messages
+	//		 In original specs, first nibble was reserved, second nibble was 4-bit version #
+	//		 It seems that PHY will only timestamp packets if first nibble == 0, i.e. 0x01 or 0x02
+	//		 In newer specifications (IEEE 1588-2019 / IEEE 802.1AS-2020, the first nibble is 
+	//		 no longer reserverd, and is used as minor version, so 0x12 is valid and means version 2.1
+	//		 Linux applications like ptplinux/ptp4l use 2.1 version # which prevents PHY from timestamping
+	//		 outgoing packets.
+	//
+	//		 The temporary solution is to remove the first nibble minor version so PHY will timestamp TX packet.
+	
+	struct ethhdr *eth_header = eth_hdr(skb);
+	if(eth_header->h_proto == 0xf788)
+	{
+		u8 *data = (uint8_t *) skb_mac_header(skb);
+		data[15] = data[15] & 0x0F;
+	}
+	
 	index = skb_get_queue_mapping(skb);
 	/* Mapping strategy:
 	 * queue_mapping = 0, unclassified, packet xmited through ring16

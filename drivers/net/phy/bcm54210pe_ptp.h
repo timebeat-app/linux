@@ -65,7 +65,9 @@ struct bcm54210pe_private {
 	struct bcm54210pe_fifo_item ts_rx_data_pd_response[MAX_POOL_SIZE];
 	
 	struct work_struct txts_work;
-	struct work_struct fifo_read_work;
+	//struct work_struct fifo_read_work;
+	struct delayed_work fifo_read_work_delayed;
+	
 	int hwts_tx_en;
 	int hwts_rx_en;
 	int layer;
