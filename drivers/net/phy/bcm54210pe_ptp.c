@@ -4,7 +4,7 @@
  *
  * PTP module for BCM54210PE
  *
- * Authors: Carlos Fernandez, Kyle Judd
+ * Authors: Carlos Fernandez, Kyle Judd, Lasse Johnsen
  * License: GPL
  * Copyright (C) 2021 Technica-Electronics GmbH
  */
@@ -26,102 +26,137 @@
 
 #include <linux/sched.h>
 
+
 #include "bcm54210pe_ptp.h"
 #include <linux/delay.h>
 #include "bcm-phy-lib.h"
 
 /* PTP header data offsets	*/
-#define PTP_CONTROL_OFFSET	32
-#define PTP_TSMT_OFFSET 	0
+#define PTP_CONTROL_OFFSET		32
+#define PTP_TSMT_OFFSET 		0
 #define PTP_SEQUENCE_ID_OFFSET	30
-#define PTP_CLOCK_ID_OFFSET	20
-#define PTP_CLOCK_ID_SIZE	8
+#define PTP_CLOCK_ID_OFFSET		20
+#define PTP_CLOCK_ID_SIZE		8
 #define PTP_SEQUENCE_PORT_NUMER_OFFSET  (PTP_CLOCK_ID_OFFSET + PTP_CLOCK_ID_SIZE)
 
 
-#define EXT_SELECT_REG		0x17
-#define EXT_DATA_REG		0x15
+#define EXT_SELECT_REG			0x17
+#define EXT_DATA_REG			0x15
 
-#define EXT_ENABLE_REG1		0x17
-#define EXT_ENABLE_DATA1	0x0F7E
-#define EXT_ENABLE_REG2		0x15
-#define EXT_ENABLE_DATA2	0x0000
+#define EXT_ENABLE_REG1			0x17
+#define EXT_ENABLE_DATA1		0x0F7E
+#define EXT_ENABLE_REG2			0x15
+#define EXT_ENABLE_DATA2		0x0000
 
-#define EXT_1588_SLICE_REG	0x0810
-#define EXT_1588_SLICE_DATA	0x0101
+#define EXT_1588_SLICE_REG		0x0810
+#define EXT_1588_SLICE_DATA		0x0101
 
-#define ORIGINAL_TIME_CODE_0 0x0854
-#define ORIGINAL_TIME_CODE_1 0x0855
-#define ORIGINAL_TIME_CODE_2 0x0856
-#define ORIGINAL_TIME_CODE_3 0x0857
-#define ORIGINAL_TIME_CODE_4 0x0858
+#define ORIGINAL_TIME_CODE_0 	0x0854
+#define ORIGINAL_TIME_CODE_1 	0x0855
+#define ORIGINAL_TIME_CODE_2 	0x0856
+#define ORIGINAL_TIME_CODE_3 	0x0857
+#define ORIGINAL_TIME_CODE_4 	0x0858
 
-#define TIME_STAMP_REG_0	0x0889
-#define TIME_STAMP_REG_1	0x088A
-#define TIME_STAMP_REG_2	0x088B
-#define TIME_STAMP_REG_3	0x08C4
-#define TIME_STAMP_INFO_1	0x088C
-#define TIME_STAMP_INFO_2	0x088D
+#define TIME_STAMP_REG_0		0x0889
+#define TIME_STAMP_REG_1		0x088A
+#define TIME_STAMP_REG_2		0x088B
+#define TIME_STAMP_REG_3		0x08C4
+#define TIME_STAMP_INFO_1		0x088C
+#define TIME_STAMP_INFO_2		0x088D
 #define INTERRUPT_STATUS_REG	0x085F
-#define INTERRUPT_MASK_REG	0x085E
-#define EXT_SOFTWARE_RESET	0x0F70
-#define EXT_RESET1		0x0001 //RESET
-#define EXT_RESET2		0x0000 //NORMAL OPERATION
-#define GLOBAL_TIMESYNC_REG	0x0FF5
+#define INTERRUPT_MASK_REG		0x085E
+#define EXT_SOFTWARE_RESET		0x0F70
+#define EXT_RESET1				0x0001 //RESET
+#define EXT_RESET2				0x0000 //NORMAL OPERATION
+#define GLOBAL_TIMESYNC_REG		0x0FF5
 
-#define TX_EVENT_MODE_REG	0x0811
-#define RX_EVENT_MODE_REG	0x0819
+#define TX_EVENT_MODE_REG		0x0811
+#define RX_EVENT_MODE_REG		0x0819
 #define TX_TSCAPTURE_ENABLE_REG	0x0821
 #define RX_TSCAPTURE_ENABLE_REG	0x0822
 #define TXRX_1588_OPTION_REG	0x0823
 
-#define TX_TS_OFFSET_LSB	0x0834
-#define TX_TS_OFFSET_MSB	0x0835
-#define RX_TS_OFFSET_LSB	0x0844
-#define RX_TS_OFFSET_MSB	0x0845
-#define NSE_DPPL_NCO_6_REG	0x087F
+#define TX_TS_OFFSET_LSB		0x0834
+#define TX_TS_OFFSET_MSB		0x0835
+#define RX_TS_OFFSET_LSB		0x0844
+#define RX_TS_OFFSET_MSB		0x0845
+#define NSE_DPPL_NCO_6_REG		0x087F
 #define NSE_DPPL_NCO_1_LSB_REG	0x0873
 #define NSE_DPPL_NCO_1_MSB_REG	0x0874
-#define DPLL_SELECT_REG		0x085b
-#define TIMECODE_SEL_REG	0x08C3
-#define SHADOW_REG_CONTROL	0x085C
-#define SHADOW_REG_LOAD		0x085D
+#define DPLL_SELECT_REG			0x085b
+#define TIMECODE_SEL_REG		0x08C3
+#define SHADOW_REG_CONTROL		0x085C
+#define SHADOW_REG_LOAD			0x085D
 
-#define PTP_INTERRUPT_REG	0x0D0C
+#define PTP_INTERRUPT_REG		0x0D0C
 
-#define CTR_DBG_REG		0x088E
-#define HEART_BEAT_REG4		0x08ED
-#define HEART_BEAT_REG3		0x08EC
-#define HEART_BEAT_REG2		0x0888
-#define	HEART_BEAT_REG1		0x0887
-#define	HEART_BEAT_REG0		0x0886
+#define CTR_DBG_REG				0x088E
+#define HEART_BEAT_REG4			0x08ED
+#define HEART_BEAT_REG3			0x08EC
+#define HEART_BEAT_REG2			0x0888
+#define	HEART_BEAT_REG1			0x0887
+#define	HEART_BEAT_REG0			0x0886
+	
+#define READ_END_REG			0x0885
 
-#define READ_END_REG		0x0885
-
-#define FIFO_READ_DELAY		100*HZ/1000 /* delay milliseconds in jiffies */
+#define FIFO_READ_DELAY			100*HZ/1000 /* delay milliseconds in jiffies */
 
 int force_logging = 0;
 
-#define LOG_ENABLED 1
+#define LOG_ENABLED 		1
 
-#define LOG_INPUT_ 1
-#define LOG_MATCH_OUTPUT_ 0
-#define LOG_MATCH_INPUT_ 0
+#define LOG_INPUT_ 			1
+#define LOG_MATCH_OUTPUT_ 	1
+#define LOG_MATCH_INPUT_ 	1
 
 #define LOG_INPUT 			((LOG_ENABLED & LOG_INPUT_) || force_logging)
 #define LOG_MATCH_OUTPUT 	((LOG_ENABLED & LOG_MATCH_OUTPUT_) || force_logging)
 #define LOG_MATCH_INPUT 	((LOG_ENABLED & LOG_MATCH_INPUT_)  || force_logging)
 
+#define TIMESTAMP_NO_VALUE 	(0xFFFFFFFFFFFFFFFF)
+
 int time_stamp_thread_cpu = 2;
 int skb_input_thread_cpu = 1;
 
 
-/*
-struct bcm54210_skb_info {
-	int ptp_type;
-	unsigned long tmo;
-};
-*/
+#define GET_TXRX_NAME(TXRX) TXRX==0 ? "RX" : "TX"
+
+char *message_name_unknown = "UNKNOWN";
+char *message_names[] = {"SYNC(0)         ", "PD_REQUEST(1)   ", "PD_REQUEST(2)   ", "PD_RESPONSE(3)  "};
+#define GET_MESSAGE_NAME(MESSAGE_TYPE) (MESSAGE_TYPE < 0 || MESSAGE_TYPE >= sizeof(message_names) ) ? message_name_unknown : message_names[MESSAGE_TYPE]
+
+char *event_name_unknown = "UNKNOWN";
+char *event_names[] = {"TIMESTAMP_INPUT ", "TIMESTAMP_MATCH "};
+#define GET_EVENT_NAME(EVENT_TYPE) (EVENT_TYPE < 0 || EVENT_TYPE >= sizeof(event_names) ) ? event_name_unknown : event_names[EVENT_TYPE]
+
+#define POLL_INTERVAL_USECS (100)
+
+void print_timestamp_message(int EVENT_TYPE, int TXRX, int MESSAGE_TYPE, int SEQUENCE_ID, int STATUS, uint64_t TIMESTAMP, int ERROR)
+{	
+	if(ERROR != 0)
+	{ printk ("******** TIMESTAMP ERROR ********************************************************************\n"); }	
+
+	printk("%s - %s - Type = %s - Seq_Id = %5d - status = %d - Timestamp = %llu\n",
+			GET_EVENT_NAME(EVENT_TYPE), GET_TXRX_NAME(TXRX), GET_MESSAGE_NAME(MESSAGE_TYPE), SEQUENCE_ID, STATUS, TIMESTAMP);
+	
+	if(ERROR != 0)
+	{ printk ("*********************************************************************************************\n"); }
+	  
+}
+	
+void print_function_message(char *FUNCTION_NAME, char *PARAM_NAME, s64 PARAM_VALUE)
+{
+	if(FUNCTION_NAME == NULL)
+	{ return; }
+
+	printk ("_____________________________________________________________________________________________\n");
+	if(PARAM_NAME == NULL)
+	{ printk ("%s\n", FUNCTION_NAME); }
+	else
+	{ printk ("%s - %s = %lld\n",FUNCTION_NAME, PARAM_NAME, PARAM_VALUE); }
+	printk ("_____________________________________________________________________________________________\n");
+	
+}
 
 static u64 ts_to_ns(u16 *ts)
 {
@@ -138,11 +173,12 @@ static u64 ts_to_ns(u16 *ts)
 	*ptr = ts[2]; ptr++; *ptr = ts[3];
 	
 	ret_val = ((u64)seconds * (u64)1000000000) + nanoseconds;
-		
+			
+	//Kyle - Could Try using KTime and  ktime_set here.
+	//Kyle - KTime, timespec64 use signed types in calculations, which may be throwing off calculations somewhere else.
+	
 	return ret_val; 
 }
-
-
 
 void pkt_hex_dump(struct sk_buff *skb)
 {
@@ -212,299 +248,300 @@ static bool get_ptp_header(struct sk_buff *skb, unsigned int type, u8 *hdr )
 	return true;
 }
 
-//static inline 
-u64 get_time_stamp_from_list(u16 seq_id, struct list_head *list_ptr, int print)
+static inline u64 get_time_stamp_from_buffers(u8 txrx, u8 message_type, u16 seq_id, int print, struct bcm54210pe_private *priv)
 {
-	struct bcm54210pe_fifo_item *item; 
+	struct bcm54210pe_circular_buffer_item *item; 
 	struct list_head *this, *next;
 	
-	list_for_each_safe(this, next, list_ptr) 
+	u8 index = (txrx * 4) + message_type;
+	
+	if(index >= CIRCULAR_BUFFER_COUNT)
+	{ return TIMESTAMP_NO_VALUE; }
+
+	list_for_each_safe(this, next, &priv->circular_buffers[index]) 
 	{
-		item = list_entry(this, struct bcm54210pe_fifo_item, list);
+		item = list_entry(this, struct bcm54210pe_circular_buffer_item, list);
 		
 		if(print)
 		{ printk("seq_id = %d, item->sequence_id = %d\n", seq_id, item->sequence_id); }
+		
 		if(item->sequence_id == seq_id && item->is_valid == 1)
 		{
 			item->is_valid = 0;
 			return item->time_stamp; 
 		}
 	}
+
+	//K.J. - It is not necessarily an error to reach this point, it just means that there is no match
+	//		 in the list YET. Calling functions can call this function multiple times waiting for a 
+	//		 timestamp value to arrive. Calling functions should log errors if necessary.
 	
-	return -1;
+	return TIMESTAMP_NO_VALUE;
 }
 
-static void tx_timestamp_work(struct work_struct *w)
+static void read_txrx_timestamp_thread(struct work_struct *w)
+{	
+
+	struct delayed_work *dw = (struct delayed_work *)w;
+	struct bcm54210pe_private *priv = container_of(dw, struct bcm54210pe_private, fifo_read_work_delayed);	
+	struct phy_device *phydev = priv->phydev;	
+	struct bcm54210pe_circular_buffer_item *item;
+	u16 fifo_info_1, fifo_info_2;
+	u16 pending_interrupt = 0;
+	u8 txrx;
+	u8 msg_type; 
+	u16 sequence_id;
+	u64 time_stamp;
+	u16 Time[4];
+
+	while(bcm_phy_read_exp(phydev, INTERRUPT_STATUS_REG) & 2)
+	{
+		
+		// Flush out the FIFO
+		bcm_phy_write_exp(phydev, READ_END_REG, 1);
+		
+		Time[3] = bcm_phy_read_exp(phydev, TIME_STAMP_REG_3);
+		Time[2] = bcm_phy_read_exp(phydev, TIME_STAMP_REG_2);
+		Time[1] = bcm_phy_read_exp(phydev, TIME_STAMP_REG_1);
+		Time[0] = bcm_phy_read_exp(phydev, TIME_STAMP_REG_0);
+				
+		fifo_info_1 = bcm_phy_read_exp(phydev, TIME_STAMP_INFO_1);
+		fifo_info_2 = bcm_phy_read_exp(phydev, TIME_STAMP_INFO_2);
+
+		bcm_phy_write_exp(phydev, READ_END_REG, 2);
+		bcm_phy_write_exp(phydev, READ_END_REG, 0);
+
+		msg_type 	= (u8) ((fifo_info_2 & 0xF000) >> 12); 
+        txrx 		= (u8) ((fifo_info_2 & 0x0800) >> 11); 		
+
+		char *TXRX = GET_TXRX_NAME(txrx);
+		char *MSG = GET_MESSAGE_NAME(msg_type);
+		
+        sequence_id = fifo_info_1;
+
+		time_stamp = ts_to_ns(Time);
+				
+			
+		if(LOG_INPUT)
+		{ print_timestamp_message(0, txrx, msg_type, sequence_id, 0, time_stamp, 0); }
+		
+		u8 index = (txrx * 4) + msg_type;
+	
+		if(index < CIRCULAR_BUFFER_COUNT)
+		{ item = list_first_entry_or_null(&priv->circular_buffers[index], struct bcm54210pe_circular_buffer_item, list); }
+		else
+		{ printk("NEW TIMESTAMP - Error 1\n"); }
+	
+		if(item != NULL)
+		{
+			list_del_init(&item->list);
+			
+			item->msg_type = msg_type; 
+			item->sequence_id = sequence_id;
+			item->time_stamp = time_stamp;
+			item->is_valid = 1;
+			
+			list_add_tail(&item->list, &priv->circular_buffers[index]);
+			
+			if (txrx) 
+			{ schedule_work_on(time_stamp_thread_cpu, &priv->txts_work);}			
+		}
+			
+		//Kyle - Check if this logic is correct ...	
+			
+		/*
+		// Trigger sync
+		bcm_phy_write_exp(phydev, NSE_DPPL_NCO_6_REG, 0xF000);
+		bcm_phy_write_exp(phydev, NSE_DPPL_NCO_6_REG, 0xF020);
+
+		// Set Heart beat time read start
+		bcm_phy_write_exp(phydev, CTR_DBG_REG, 0x400);
+		// Set read end bit
+		bcm_phy_write_exp(phydev, CTR_DBG_REG, 0x800);
+		bcm_phy_write_exp(phydev, CTR_DBG_REG, 0x000);
+		*/
+		
+	}
+	
+	schedule_delayed_work_on(time_stamp_thread_cpu, &priv->fifo_read_work_delayed, usecs_to_jiffies(POLL_INTERVAL_USECS));
+	
+	/*
+	int err = request_threaded_irq(gpio_to_irq(41), bcm54210pe_handle_interrupt, bcm54210pe_handle_interrupt_thread,
+								IRQF_ONESHOT | IRQF_SHARED,
+								phydev_name(phydev), phydev);
+	*/
+								
+	return; 
+}
+static void match_tx_timestamp_thread(struct work_struct *w)
 {
 	struct bcm54210pe_private *priv = container_of(w, struct bcm54210pe_private, txts_work);
 	
 	struct skb_shared_hwtstamps *shhwtstamps = NULL;
 	struct sk_buff *skb;
-	struct bcm54210pe_fifo_item *item; 
+	struct bcm54210pe_circular_buffer_item *item; 
 	struct list_head *this, *next;
 	struct bcm54210_skb_info *skb_info;
 
 	struct ptp_header *hdr;
-	u8 msgtype;
-	u16 seq_id;		
-		
-	char *PTP_Message_Type_String = "DEBUG";
+	u8 msg_type;
+	u16 sequence_id;		
 				
 	struct list_head *list_ptr = NULL;
 		
-	skb = skb_dequeue(&priv->tx_queue);
+	skb = skb_dequeue(&priv->tx_skb_queue);
 	
 	int match_found = 0;
 	
+	u64 time_stamp = TIMESTAMP_NO_VALUE;
+	
 	while(skb != NULL)
 	{
-
-		//Kyle - set type correctly when implementing IP and other PTP types
+		//Kyle - may need to timestamp packets with TIMESTAMP_NO_VALUE if no match found.
 		
-		int type = PTP_CLASS_V2_L2;
+		int type = ptp_classify_raw(skb);		
 		hdr = ptp_parse_header(skb, type);
 		
 		if (!hdr)
 		{ return; }	
 			
-		msgtype = ptp_get_msgtype(hdr, type);
-		seq_id = be16_to_cpu(hdr->sequence_id);
+		msg_type = ptp_get_msgtype(hdr, type);
+		sequence_id = be16_to_cpu(hdr->sequence_id);
 		
-		if(msgtype == 0)
-		{ list_ptr = &priv->tx_fifo_sync; PTP_Message_Type_String = "SYNC"; }
-		else if(msgtype == 2)
-		{ list_ptr = &priv->tx_fifo_pd_request; PTP_Message_Type_String = "PD_REQUEST"; }
-		else if(msgtype == 3)
-		{ list_ptr = &priv->tx_fifo_pd_response;  PTP_Message_Type_String = "PD_RESPONSE";}
+		char *TXRX = GET_TXRX_NAME(1);
+		char *MSG = GET_MESSAGE_NAME(msg_type);
+		
+		//Kyle - we may need to check multiple times like in input.
+		time_stamp = get_time_stamp_from_buffers(1, msg_type, sequence_id, 0, priv);
 
-		if(list_ptr != NULL)
+		shhwtstamps = skb_hwtstamps(skb);
+		
+		if (shhwtstamps)
 		{
-			u64 time_stamp = get_time_stamp_from_list(seq_id, list_ptr, 0);
+			int status = 0;
+			memset(shhwtstamps, 0, sizeof(*shhwtstamps));
+			shhwtstamps->hwtstamp = ns_to_ktime(time_stamp);			
 			
-			shhwtstamps = skb_hwtstamps(skb);
-			if (shhwtstamps)
-			{
-				int status = 0;
-				memset(shhwtstamps, 0, sizeof(*shhwtstamps));
-				shhwtstamps->hwtstamp = ns_to_ktime(time_stamp);			
-				
-				skb_tstamp_tx(skb, shhwtstamps);
-				
-				match_found++;
-				
-				if(LOG_MATCH_OUTPUT)
-				{ 
-					unsigned cpu = smp_processor_id();
+			//Kyle - check if skb_tstamp_tx is still the right function to use, documentation suggests other, but real drivers use skb_tstamp_tx
+			skb_tstamp_tx(skb, shhwtstamps);
+			
+			match_found++;
+			
+			if(LOG_MATCH_OUTPUT)
+			{ print_timestamp_message(1, 1, msg_type, sequence_id, 0, time_stamp, 0); }
 		
-					printk("TIME_STAMP_MATCH_TX - Seq_Id = %d, Timestamp = %llu, status = %d, Message_Type = %s, CPU = %d\n", seq_id, time_stamp, status, PTP_Message_Type_String, cpu); 
-					
-				}
-			
-				//return;
-			}
 		}
-		
-		//Kyle - reference comes from bcmgenet
-		//skb_unref(skb);
-		
-		skb = skb_dequeue(&priv->tx_queue);
+		//K.J. - consume_skb release the reference to the clone created in bcmgenet
+		consume_skb(skb);
+		skb = skb_dequeue(&priv->tx_skb_queue);
 	}
 	
 	if(match_found == 0)
-	{ printk("TX Time Stamp Failed - msgtype = %d, seq_id = %d\n", msgtype, seq_id); }
+	{ print_timestamp_message(1, 1, msg_type, sequence_id, 0, time_stamp, 1); }
 					
 	return; 
 }
- 
 
-static int bcm54210pe_sw_reset(struct phy_device *phydev)
+bool match_rx_timestamp_callback(struct mii_timestamper *mii_ts, struct sk_buff *skb, int type)
 {
-	printk("______________bcm54210pe_sw_reset\n");
+	struct skb_shared_hwtstamps *shhwtstamps = NULL;
+	struct bcm54210pe_private *priv = container_of(mii_ts, struct bcm54210pe_private, mii_ts);
 	
-	u16 err;
-	u16 aux;
-        
-	err =  bcm_phy_write_exp(phydev, EXT_SOFTWARE_RESET, EXT_RESET1);
-	err = bcm_phy_read_exp(phydev, EXT_ENABLE_REG1);
-        if (err < 0)
-                return err;
-        err = bcm_phy_write_exp(phydev, EXT_SOFTWARE_RESET, EXT_RESET2);
-	aux = bcm_phy_read_exp(phydev, EXT_SOFTWARE_RESET);
-        return err;
-}
-
-static void bcm54210pe_get_fifo (struct work_struct *w)
-{	
-	struct delayed_work *dw = (struct delayed_work *)w;
-	struct bcm54210pe_private *priv = container_of(dw, struct bcm54210pe_private, fifo_read_work_delayed);	
-	struct phy_device *phydev = priv->phydev;	
-	struct bcm54210pe_fifo_item *item;
-	u16 fifo_info_1, fifo_info_2;
-	u16 pending_interrupt = 0;
-	u8 txrx;
-	u8 msgtype; 
+	int status = 0;
+	
+	//////////////////////////
+	
+	if (!priv->hwts_rx_en)  
+	{ return false; } //Kyle - May need to timestamp with TIMESTAMP_NO_VALUE even if we return early.
+	
+	int count = 0;
+	
+	struct ptp_header *hdr;
+	u8 msg_type;
 	u16 sequence_id;
 	u64 time_stamp;
-	u16 Time[4];
-
-	int TX_1;
-	int TX_2;
-	int RX_1;
-	int RX_2;
 		
-	struct list_head *list_ptr = NULL;
+	hdr = ptp_parse_header(skb, type);
 	
-	pending_interrupt = bcm_phy_read_exp(phydev, INTERRUPT_STATUS_REG); 
-	pending_interrupt &= 2;
-
-
-//	pr_err("Interrupt status 0x%04x", bcm_phy_read_exp(phydev, 0x85f));
-//	pr_err("TXRX_1588 counter %04x", bcm_phy_read_exp(phydev, 0x884));
-	while(bcm_phy_read_exp(phydev, 0x85f) & 2)
-	{		
-		// Flush out the FIFO
-		bcm_phy_write_exp(phydev, 0x885, 1);
-		
-		#define TX_TS_OFFSET_LSB	0x0834
-		#define TX_TS_OFFSET_MSB	0x0835
-		#define RX_TS_OFFSET_LSB	0x0844
-		#define RX_TS_OFFSET_MSB	0x0845
-
-		TX_1 = bcm_phy_read_exp(phydev, TX_TS_OFFSET_LSB);
-		TX_2 = bcm_phy_read_exp(phydev, TX_TS_OFFSET_MSB);
-		RX_1 = bcm_phy_read_exp(phydev, RX_TS_OFFSET_LSB);
-		RX_2 = bcm_phy_read_exp(phydev, RX_TS_OFFSET_MSB);
-		
-		//printk("TX_1 = %d - TX_2 = %d - RX_1 = %d - RX_2 = %d\n", TX_1, TX_2, RX_1, RX_2);
-		
-		Time[3] = bcm_phy_read_exp(phydev, 0x8c4);
-		Time[2] = bcm_phy_read_exp(phydev, 0x88b);
-		Time[1] = bcm_phy_read_exp(phydev, 0x88a);
-		Time[0] = bcm_phy_read_exp(phydev, 0x889);
-		
-		//printk("Time[0] = %02X - Time[1] = %02X - Time[2] = %02X - Time[3] = %02X\n", Time[0], Time[1], Time[2], Time[3]);
-		
-		
-		fifo_info_1 = bcm_phy_read_exp(phydev, 0x88c);
-		fifo_info_2 = bcm_phy_read_exp(phydev, 0x88d);
-
-		bcm_phy_write_exp(phydev, 0x885, 2);
-		bcm_phy_write_exp(phydev, 0x885, 0);
-
-		msgtype 	= (u8) ((fifo_info_2 & 0xF000) >> 12); 
-        txrx 		= (u8) ((fifo_info_2 & 0x0800) >> 11); 		
-
-		char *IO = "INPUT";
-		if(txrx)
-		{ IO = "OUTPUT"; }
+	if (hdr == NULL)
+	{ return false; } //Kyle - May need to timestamp with TIMESTAMP_NO_VALUE even if we return early.
 	
-		char *MSG = "SYNC";
-		if(msgtype == 2)
-		{ MSG = "PD_REQUEST"; }
-		if(msgtype == 3)
-		{ MSG = "PD_RESPONSE"; }
-			
-        sequence_id = fifo_info_1;
-
-		time_stamp = ts_to_ns(Time);
-			
-		if(LOG_INPUT)
-		{ printk("NEW TIMESTAMP - %s - %s - sequence_id = %d - timestamp = %llu\n", IO, MSG, sequence_id, time_stamp); }
+	msg_type = ptp_get_msgtype(hdr, type);
+	sequence_id = be16_to_cpu(hdr->sequence_id);
 		
-
-		list_ptr = NULL;
+	char *message_name = GET_MESSAGE_NAME(msg_type);
 		
-		if (txrx) 
-		{ 
-			if(msgtype == 0)
-			{ list_ptr = &priv->tx_fifo_sync; }
-			else if(msgtype == 2)
-			{ list_ptr = &priv->tx_fifo_pd_request; }
-			else if(msgtype == 3)
-			{ list_ptr = &priv->tx_fifo_pd_response; }
-		}
-		else
-		{
-			if(msgtype == 0)
-			{ list_ptr = &priv->rx_fifo_sync; }
-			else if(msgtype == 2)
-			{ list_ptr = &priv->rx_fifo_pd_request; }
-			else if(msgtype == 3)
-			{ list_ptr = &priv->rx_fifo_pd_response; }
-		}
-		
-		if(list_ptr != NULL)
-		{ 
-			item = list_first_entry_or_null(list_ptr, struct bcm54210pe_fifo_item, list);
-		}
-		else
-		{		
-			printk("NEW TIMESTAMP - Error 1\n");
-		}
+	time_stamp = TIMESTAMP_NO_VALUE;
 	
-		if(list_ptr != NULL && item != NULL)
-		{
-			list_del_init(&item->list);
-			
-			item->msgtype = msgtype; 
-			item->sequence_id = sequence_id;
-			item->time_stamp = time_stamp;
-			item->is_valid = 1;
-			
-			list_add_tail(&item->list, list_ptr);
-			
-			if (txrx) 
-			{ schedule_work_on(time_stamp_thread_cpu, &priv->txts_work);}
-				
-			/*
-			if(LOG_INPUT)
-			{				
-				unsigned cpu = smp_processor_id();
+	//Kyle - figure out best way to do this...
+	//Kyle - mdelay(10) may be too much, user level apps aren't waiting that long to receive timestamps.
+	int x = 0;
+	for(x = 0; x < 10; x++)
+	{
+		time_stamp = get_time_stamp_from_buffers(0, msg_type, sequence_id, 0, priv);
+		if(time_stamp != TIMESTAMP_NO_VALUE)
+		{ break; }
 		
-				if (txrx) 
-				{ printk("TIME_STAMP_OUT - Seq_Id = %d, Timestamp = %llu, Message_Type = %d\n", item->sequence_id, item->time_stamp, item->msgtype); }
-				else
-				{
-					if(msgtype == 0)
-					{ printk("TIME_STAMP_INPUT_SYNC - Seq_Id = %d, Timestamp = %llu, Message Type = %d, CPU = %d\n", item->sequence_id, item->time_stamp, item->msgtype, cpu); }
-					else if(msgtype == 2)
-					{ printk("TIME_STAMP_INPUT_PDRQ - Seq_Id = %d, Timestamp = %llu, Message Type = %d\n", item->sequence_id, item->time_stamp, item->msgtype); }
-					else if(msgtype == 3)
-					{ printk("TIME_STAMP_INPUT_PDRQ2 - Seq_Id = %d, Timestamp = %llu, Message Type = %d\n", item->sequence_id, item->time_stamp, item->msgtype); }
-					else
-					{ printk("TIME_STAMP_INPUT Unknown - Seq_Id = %d, Timestamp = %llu, Message Type = %d\n", item->sequence_id, item->time_stamp, item->msgtype); }
-				}
-			}
-			*/
-		}
-			
-		// Trigger sync
-		bcm_phy_write_exp(phydev, 0x87f, 0xF000);
-		bcm_phy_write_exp(phydev, 0x87f, 0xF020);
-
-		// Set Heart beat time read start
-		bcm_phy_write_exp(phydev, 0x88e, 0x400);
-		// Set read end bit
-		bcm_phy_write_exp(phydev, 0x88e, 0x800);
-		bcm_phy_write_exp(phydev, 0x88e, 0x000);
+		mdelay(10);
 	}
 	
-	//udelay(100);
-	//schedule_work_on(time_stamp_thread_cpu, &priv->fifo_read_work);
+	shhwtstamps = skb_hwtstamps(skb);
+	if (shhwtstamps) 
+	{
+		memset(shhwtstamps, 0, sizeof(*shhwtstamps));
+		shhwtstamps->hwtstamp = ns_to_ktime(time_stamp);  
+	}
 	
-	schedule_delayed_work_on(time_stamp_thread_cpu, &priv->fifo_read_work_delayed, usecs_to_jiffies(100));
+	status = netif_rx_ni(skb);
+
+	if(LOG_MATCH_INPUT)
+	{
+		if(time_stamp != TIMESTAMP_NO_VALUE)
+		{ print_timestamp_message(1, 0, msg_type, sequence_id, status, time_stamp, 0); }
+		else
+		{ 
+			force_logging = 1;
+			print_timestamp_message(1, 0, msg_type, sequence_id, status, time_stamp, 1);
+		}
+	}
 	
-	return; 
+	return true;
+}
+
+irqreturn_t bcm54210pe_handle_interrupt_thread(int irq, void * phy_dat)
+{
+	printk("______________________________________________\n");
+	printk("______________________________________________\n");
+	printk("______________________________________________\n");
+	printk("____________bcm54210pe_handle_interrupt_thread\n");
+	printk("______________________________________________\n");
+	printk("______________________________________________\n");
+	printk("______________________________________________\n");
+	
+	return IRQ_HANDLED;
 }
 
 irqreturn_t bcm54210pe_handle_interrupt(int irq, void * phy_dat)
 {
+	printk("______________________________________________\n");
+	printk("______________________________________________\n");
+	printk("______________________________________________\n");
+	printk("___________________bcm54210pe_handle_interrupt\n");
+	printk("______________________________________________\n");
+	printk("______________________________________________\n");
+	printk("______________________________________________\n");
+	
+	
+	return IRQ_WAKE_THREAD;
+	
+	
+	//////////////////////////////////////////////////////////////
+	
+	
 	struct phy_device *phydev = phy_dat;
 	struct phy_driver *drv = phydev->drv;
 
-
 	u16 interrupt_status = 0; 
-
 
 	interrupt_status = bcm_phy_read_exp(phydev, INTERRUPT_STATUS_REG);
 	if (!interrupt_status)
@@ -523,13 +560,15 @@ irqreturn_t bcm54210pe_handle_interrupt(int irq, void * phy_dat)
 
 	/*if (interrupt_status & 0x0001)
 	  bcm54210pe_get_fifo(phydev);*/
-	return IRQ_HANDLED;
+  
+	//phy_clear_interrupt(phydev);
+	return IRQ_WAKE_THREAD;
 }
 
 
 static int bcm54210pe_config_1588(struct phy_device *phydev)
 {
-	printk("______________bcm54210pe_config_1588\n");
+	print_function_message("bcm54210pe_config_1588", NULL, 0);
 	
 	int err;
 	u16 aux = 0xFFFF;
@@ -562,18 +601,23 @@ static int bcm54210pe_config_1588(struct phy_device *phydev)
 
 	err =  bcm_phy_write_exp(phydev, NSE_DPPL_NCO_6_REG, 0xF020); //NCO Register 6 => Enable SYNC_OUT pulse train and Internal Syncout ad framesync
 
-	/*printk("DEBUG: GPIO %d IRQ %d\n", 41, gpio_to_irq(41));
-	  err = request_threaded_irq(gpio_to_irq(41), NULL, bcm54210pe_handle_interrupt,
-	  IRQF_ONESHOT | IRQF_SHARED,
-	  phydev_name(phydev), phydev);
+	/*
+	//15, 33 or 41 
+	printk("DEBUG: GPIO %d IRQ %d\n", 41, gpio_to_irq(41)); 
+	
+	err = request_threaded_irq(gpio_to_irq(41), bcm54210pe_handle_interrupt, bcm54210pe_handle_interrupt_thread,
+								IRQF_ONESHOT | IRQF_SHARED,
+								phydev_name(phydev), phydev);
 
-	  */
+	printk("request_threaded_irq err = %d\n", err);			
+	*/
+	
 	return err; 
 }
 
 static int bcm54210pe_gettime(struct ptp_clock_info *info, struct timespec64 *ts)
 {
-	//printk("______________bcm54210pe_gettime\n");
+	
 	u16 Time[5];
 	
 	struct bcm54210pe_ptp *ptp = container_of(info, struct bcm54210pe_ptp, caps);
@@ -584,6 +628,7 @@ static int bcm54210pe_gettime(struct ptp_clock_info *info, struct timespec64 *ts
 	phy_lock_mdio_bus(phydev);
 	
 	// Trigger sync which will capture the heartbeat counter
+	
 	__bcm_phy_write_exp(phydev, NSE_DPPL_NCO_6_REG, 0xF000);
 	__bcm_phy_write_exp(phydev, NSE_DPPL_NCO_6_REG, 0xF020);
 
@@ -603,23 +648,22 @@ static int bcm54210pe_gettime(struct ptp_clock_info *info, struct timespec64 *ts
 	
 	//mutex_unlock(&ptp->clock_lock);
 	
-	u64 Time_Stamp_NS = ts_to_ns(Time);
+	u64 time_stamp = ts_to_ns(Time);
 			
-	printk("bcm54210pe_gettime - Time_Stamp_NS = %llu\n", Time_Stamp_NS);
+	print_function_message("ptp_clock_info", "time_stamp", time_stamp);
 
-	ts->tv_sec = ( (u64)Time_Stamp_NS / (u64)1000000000 );
-	ts->tv_nsec = ( (u64)Time_Stamp_NS % (u64)1000000000 );
+	ts->tv_sec = ( (u64)time_stamp / (u64)1000000000 );
+	ts->tv_nsec = ( (u64)time_stamp % (u64)1000000000 );
 	
 	return 0;
 }
 
-
-static int bcm54210pe_settime(struct ptp_clock_info *info,
-		const struct timespec64 *ts)
+static int bcm54210pe_settime(struct ptp_clock_info *info, const struct timespec64 *ts)
 {
-	uint64_t Nanoseconds = (ts->tv_sec * 1000000000) + ts->tv_nsec;
+	uint64_t time_stamp = (ts->tv_sec * 1000000000) + ts->tv_nsec;
 	
-	printk("______________bcm54210pe_settime - Nanoseconds = %llu\n", Nanoseconds);
+	print_function_message("bcm54210pe_settime", "time_stamp", time_stamp);
+	
 	//Kyle - Should figure / test this out.
 
 	int var[4];
@@ -627,11 +671,11 @@ static int bcm54210pe_settime(struct ptp_clock_info *info,
 	struct bcm54210pe_ptp *ptp = container_of(info, struct bcm54210pe_ptp, caps);
 	struct phy_device *phydev = ptp->chosen->phydev;
 
-	var[4] = (int) (ts->tv_sec & 0xFFFF00000000) >> 32;
-	var[3] = (int) (ts->tv_sec & 0x0000FFFF0000) >> 16; 
-	var[2] = (int) (ts->tv_sec & 0x00000000FFFF);
-	var[1] = (int) (ts->tv_nsec & 0x0000FFFF00000) >> 16;
-	var[0] = (int) (ts->tv_nsec & 0x000000000FFFF); 
+	var[4] = (int) (ts->tv_sec 	& 0x0000FFFF00000000) >> 32;
+	var[3] = (int) (ts->tv_sec 	& 0x00000000FFFF0000) >> 16; 
+	var[2] = (int) (ts->tv_sec 	& 0x000000000000FFFF);
+	var[1] = (int) (ts->tv_nsec & 0x00000000FFFF0000) >> 16;
+	var[0] = (int) (ts->tv_nsec & 0x000000000000FFFF); 
 
 	phy_lock_mdio_bus(phydev);
 
@@ -661,7 +705,7 @@ static int bcm54210pe_settime(struct ptp_clock_info *info,
 
 static int bcm54210pe_adjfine(struct ptp_clock_info *info, long scaled_ppm)
 {	
-	printk("______________bcm54210pe_adjfine - scaled_ppm = %d\n", scaled_ppm);
+	print_function_message("bcm54210pe_adjfine", "scaled_ppm", scaled_ppm);
 	
 	int err = 0; 
 	u64 adj;
@@ -705,8 +749,8 @@ finish:
 
 static int bcm54210pe_adjtime(struct ptp_clock_info *info, s64 delta)
 {
-	printk("______________bcm54210pe_adjtime\n");
-	
+	print_function_message("bcm54210pe_adjtime", "delta", delta);
+
 	//Kyle - Should figure / test this out.
 	
 	int err; 
@@ -732,86 +776,8 @@ finish:
 	return err;
 }
 
-
 bool bcm54210pe_rxtstamp(struct mii_timestamper *mii_ts, struct sk_buff *skb, int type)
-{
-	struct skb_shared_hwtstamps *shhwtstamps = NULL;
-	struct bcm54210pe_private *priv = container_of(mii_ts, struct bcm54210pe_private, mii_ts);
-
-	struct list_head *list_ptr = NULL;
-	
-	int status = 0;
-	
-	//////////////////////////
-	
-	if (!priv->hwts_rx_en)  
-	{ return false; } //Kyle - May need to timestamp with -1 even if we return early.
-	
-	int count = 0;
-	
-	struct ptp_header *hdr;
-	u8 msgtype;
-	u16 seq_id;
-	u64 time_stamp;
-	
-	
-	hdr = ptp_parse_header(skb, type);
-			
-	if (hdr == NULL)
-	{ return false; } //Kyle - May need to timestamp with -1 even if we return early.
-	
-	msgtype = ptp_get_msgtype(hdr, type);
-	seq_id = be16_to_cpu(hdr->sequence_id);
-		
-	char *PTP_Message_Type_String = "DEBUG";
-	
-	if(msgtype == 0)
-	{ list_ptr = &priv->rx_fifo_sync; PTP_Message_Type_String = "SYNC"; }
-	else if(msgtype == 2)
-	{ list_ptr = &priv->rx_fifo_pd_request; PTP_Message_Type_String = "PD_REQUEST"; }
-	else if(msgtype == 3)
-	{ list_ptr = &priv->rx_fifo_pd_response; PTP_Message_Type_String = "PD_RESPONSE"; }
-	else	
-	{ return false; } //Kyle - May need to timestamp with -1 even if we return early.	
-
-	int x = 0;
-	time_stamp = -1;
-	
-	//Kyle - figure out best way to do this...
-	for(x = 0; x < 10; x++)
-	{
-		time_stamp = get_time_stamp_from_list(seq_id, list_ptr, 0);
-		if(time_stamp != -1)
-		{ break; }
-	
-		mdelay(10);
-	}
-	
-	shhwtstamps = skb_hwtstamps(skb);
-	if (shhwtstamps) 
-	{
-		memset(shhwtstamps, 0, sizeof(*shhwtstamps));
-		shhwtstamps->hwtstamp = ns_to_ktime(time_stamp);  
-	}
-	
-	status = netif_rx_ni(skb);
-
-	if(LOG_MATCH_INPUT)
-	{
-		unsigned cpu = smp_processor_id();
-				 
-		if(time_stamp != -1)
-		{ printk("TIME_STAMP_MATCH_RX - Seq_Id = %d, Timestamp = %llu, status = %d, Message_Type = %s, CPU = %d\n", seq_id, time_stamp, status, PTP_Message_Type_String, cpu); }
-		else
-		{ 
-			force_logging = 1;
-			printk("TIME_STAMP_FAILURE - Seq_Id = %d, Message_Type = %d - %s\n", seq_id, msgtype, PTP_Message_Type_String);
-		}
-	}
-	
-	return true;
-}
-
+{ return match_rx_timestamp_callback(mii_ts, skb, type); }
 
 void bcm54210pe_txtstamp(struct mii_timestamper *mii_ts, struct sk_buff *skb, int type)
 {
@@ -820,9 +786,9 @@ void bcm54210pe_txtstamp(struct mii_timestamper *mii_ts, struct sk_buff *skb, in
 	switch (device->hwts_tx_en) 
 	{
 		case HWTSTAMP_TX_ON:
-		{
+		{	
 			skb_shinfo(skb)->tx_flags |= SKBTX_IN_PROGRESS;
-			skb_queue_tail(&device->tx_queue, skb);
+			skb_queue_tail(&device->tx_skb_queue, skb);
 			break;
 		}
 		case HWTSTAMP_TX_OFF:
@@ -839,11 +805,9 @@ void bcm54210pe_txtstamp(struct mii_timestamper *mii_ts, struct sk_buff *skb, in
 
 int bcm54210pe_ts_info(struct mii_timestamper *mii_ts, struct ethtool_ts_info *info)
 {
-	printk("______________bcm54210pe_ts_info\n");
+	print_function_message("bcm54210pe_ts_info", NULL, 0);
 	
-	struct bcm54210pe_private *bcm54210pe = container_of(mii_ts, 
-			struct bcm54210pe_private, mii_ts);
-
+	struct bcm54210pe_private *bcm54210pe = container_of(mii_ts, struct bcm54210pe_private, mii_ts);
 
 	info->so_timestamping =
 		SOF_TIMESTAMPING_TX_HARDWARE |
@@ -864,7 +828,7 @@ int bcm54210pe_ts_info(struct mii_timestamper *mii_ts, struct ethtool_ts_info *i
 
 int bcm54210pe_hwtstamp(struct mii_timestamper *mii_ts, struct ifreq *ifr)
 {
-	printk("______________bcm54210pe_hwtstamp\n");
+	print_function_message("bcm54210pe_hwtstamp", NULL, 0);
 	
 	struct bcm54210pe_private *device = container_of(mii_ts, struct bcm54210pe_private, mii_ts);
 
@@ -874,8 +838,6 @@ int bcm54210pe_hwtstamp(struct mii_timestamper *mii_ts, struct ifreq *ifr)
 	if (copy_from_user(&cfg, ifr->ifr_data, sizeof(cfg)))
 		return -EFAULT;
 
-	//printk("----------- flags = %d, tx_type = %d, rx_filter = %d\n", cfg.flags, cfg.tx_type, cfg.rx_filter);
-	
 	if (cfg.flags) /* reserved for future extensions */
 		return -EINVAL;
 
@@ -929,8 +891,6 @@ int bcm54210pe_hwtstamp(struct mii_timestamper *mii_ts, struct ifreq *ifr)
 	return copy_to_user(ifr->ifr_data, &cfg, sizeof(cfg)) ? -EFAULT : 0;
 }
 
-
-
 static const struct ptp_clock_info bcm54210pe_clk_caps = {
         .owner          = THIS_MODULE,
         .name           = "BCM54210PE_PHC",
@@ -947,11 +907,29 @@ static const struct ptp_clock_info bcm54210pe_clk_caps = {
 };
 
 
+static int bcm54210pe_sw_reset(struct phy_device *phydev)
+{
+	print_function_message("bcm54210pe_sw_reset", NULL, 0);
+	
+	u16 err;
+	u16 aux;
+        
+	err =  bcm_phy_write_exp(phydev, EXT_SOFTWARE_RESET, EXT_RESET1);
+	err = bcm_phy_read_exp(phydev, EXT_ENABLE_REG1);
+        if (err < 0)
+                return err;
+        err = bcm_phy_write_exp(phydev, EXT_SOFTWARE_RESET, EXT_RESET2);
+	aux = bcm_phy_read_exp(phydev, EXT_SOFTWARE_RESET);
+        return err;
+}
+
+
 int bcm54210pe_probe(struct phy_device *phydev)
 {	
-	//printk("bcm54210pe_probe\n");
+	//print_function_message("bcm54210pe_probe", NULL, 0);
 	
-	int err = 0, i;
+	int err = 0;
+	int x, y;
 	struct bcm54210pe_ptp *ptp;
         struct bcm54210pe_private *bcm54210pe;
 
@@ -973,8 +951,7 @@ int bcm54210pe_probe(struct phy_device *phydev)
 
 	bcm54210pe->ptp = ptp;
 
-	skb_queue_head_init(&bcm54210pe->tx_queue);
-	bcm54210pe->mii_ts.rxtstamp =  bcm54210pe_rxtstamp;
+	bcm54210pe->mii_ts.rxtstamp = bcm54210pe_rxtstamp;
 	bcm54210pe->mii_ts.txtstamp = bcm54210pe_txtstamp;
 	bcm54210pe->mii_ts.hwtstamp = bcm54210pe_hwtstamp;
 	bcm54210pe->mii_ts.ts_info  = bcm54210pe_ts_info;
@@ -982,38 +959,29 @@ int bcm54210pe_probe(struct phy_device *phydev)
 
 	phydev->mii_ts = &bcm54210pe->mii_ts;
 	
-	INIT_WORK(&bcm54210pe->txts_work, tx_timestamp_work);
-	//INIT_WORK(&bcm54210pe->fifo_read_work, bcm54210pe_get_fifo);
-	INIT_DELAYED_WORK(&bcm54210pe->fifo_read_work_delayed, bcm54210pe_get_fifo);
-		
-	INIT_LIST_HEAD(&bcm54210pe->tx_fifo_sync);
-	INIT_LIST_HEAD(&bcm54210pe->tx_fifo_pd_request);
-	INIT_LIST_HEAD(&bcm54210pe->tx_fifo_pd_response);
+	INIT_WORK(&bcm54210pe->txts_work, match_tx_timestamp_thread);
+	INIT_DELAYED_WORK(&bcm54210pe->fifo_read_work_delayed, read_txrx_timestamp_thread);
 	
-	INIT_LIST_HEAD(&bcm54210pe->rx_fifo_sync);
-	INIT_LIST_HEAD(&bcm54210pe->rx_fifo_pd_request);
-	INIT_LIST_HEAD(&bcm54210pe->rx_fifo_pd_response);
+	skb_queue_head_init(&bcm54210pe->tx_skb_queue);
 	
-	for (i = 0; i < MAX_POOL_SIZE; i++)
-	{		
-		list_add(&bcm54210pe->ts_tx_data_sync[i].list, &bcm54210pe->tx_fifo_sync);
-		list_add(&bcm54210pe->ts_tx_data_pd_request[i].list, &bcm54210pe->tx_fifo_pd_request);
-		list_add(&bcm54210pe->ts_tx_data_pd_response[i].list, &bcm54210pe->tx_fifo_pd_response);
-		
-		list_add(&bcm54210pe->ts_rx_data_sync[i].list, &bcm54210pe->rx_fifo_sync);
-		list_add(&bcm54210pe->ts_rx_data_pd_request[i].list, &bcm54210pe->rx_fifo_pd_request);
-		list_add(&bcm54210pe->ts_rx_data_pd_response[i].list, &bcm54210pe->rx_fifo_pd_response);		
+	x = 0; y = 0;
+	for (x = 0; x < CIRCULAR_BUFFER_COUNT; x++)
+	{ 
+		INIT_LIST_HEAD(&bcm54210pe->circular_buffers[x]);
+	
+		for (y = 0; y < CIRCULAR_BUFFER_ITEM_COUNT; y++)
+		{ list_add(&bcm54210pe->circular_buffer_items[x][y].list, &bcm54210pe->circular_buffers[x]); }
 	}
 	
 	memcpy(&bcm54210pe->ptp->caps, &bcm54210pe_clk_caps, sizeof(bcm54210pe_clk_caps));
 	mutex_init(&bcm54210pe->ptp->clock_lock);
 	mutex_init(&bcm54210pe->ptp->timeset_lock);
 	ptp->chosen = bcm54210pe;
-        phydev->priv = bcm54210pe;
+    phydev->priv = bcm54210pe;
 	ptp->caps.owner = THIS_MODULE;
 
-	bcm54210pe->ptp->ptp_clock = ptp_clock_register(&bcm54210pe->ptp->caps,
-			&phydev->mdio.dev);
+	bcm54210pe->ptp->ptp_clock = ptp_clock_register(&bcm54210pe->ptp->caps, &phydev->mdio.dev);
+	
 	if (IS_ERR(bcm54210pe->ptp->ptp_clock)) {
                         err = PTR_ERR(bcm54210pe->ptp->ptp_clock);
                         goto error;
@@ -1021,7 +989,6 @@ int bcm54210pe_probe(struct phy_device *phydev)
 	
 	
 	schedule_delayed_work_on(time_stamp_thread_cpu, &bcm54210pe->fifo_read_work_delayed, usecs_to_jiffies(100));
-	//schedule_work_on(time_stamp_thread_cpu, &bcm54210pe->fifo_read_work); //start fifo work
 
 error:
 	return err;

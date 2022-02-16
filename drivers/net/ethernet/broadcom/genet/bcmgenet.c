@@ -84,57 +84,93 @@ MODULE_PARM_DESC(skip_umac_reset, "Skip UMAC reset step");
 
 static inline int classify_ptp_raw_local(struct sk_buff *skb)
 {
+	int ret_val = 0;;
+	
 	struct ethhdr *eth_header = eth_hdr(skb);
-	if(eth_header->h_proto == 0xf788)
-	{ 
-		int type = PTP_CLASS_V2_L2;
-		struct ptp_header *hdr = ptp_parse_header(skb, PTP_CLASS_V2_L2);
-		if(hdr != NULL)
-		{
-			//K.J. - should only time stamp SYNC_MESSAGE(0), PATH_DELAY_REQ_MESSAGE(2), and PATH_DELAY_RESP_MESSAGE(3)
-			//Kyle - should differentiate between PTP_CLASS_V2 & PTP_CLASS_V1, but PTP_CLASS_V2 is most likely
-			
-			//if( ((hdr->tsmt & 0x0f) == 0) || ((hdr->tsmt & 0x0f) == 2) || ((hdr->tsmt & 0x0f) == 3) )
-			if( (hdr->tsmt & 0x0f) < 4 )
-			{ return PTP_CLASS_V2_L2; }
-		}		
-	}
+	if(eth_header == NULL)
+	{ return 0; }
 
+	u8 *data = ((u8 *)eth_header) + 14;
+	
+	if(eth_header->h_proto == 0xf788) 						//Layer 2 (Automotive, 802.1AS, etc.)
+	{ 
+		return data[1] == 2 ? PTP_CLASS_V2_L2 : 0;
+	}
+	else if( (eth_header->h_proto == 0x0008 )				//IPv4
+			&& (data[9] == 17) 								//UDP
+			&& ( (ntohs(*((u16 *)&data[6])) & 0x1fff) == 0) //No Fragment Offset
+			)
+	{		
+		data += ((data[0] & 0x0f) * 4);
+		
+		if( ntohs(*((u16 *)&data[2])) == 319 ) 				//Destination Port = PTP
+		{
+			data += 8;
+			
+			if(data[1] == 1)
+			{ return PTP_CLASS_V1_IPV4; }
+			else if(data[1] == 2)
+			{ return PTP_CLASS_V2_IPV4; }
+			
+			return 0;
+		}
+	
+	}
+	else if( (eth_header->h_proto == 0xDD86) ) 				//IPv6
+	{
+		if((data[6] == 17)) 								//UDP
+		{		
+			if(ntohs(*((u16 *)&data[42])) == 319) 			//Destination Port = PTP
+			{					
+				if(data[48 + 1] == 1)
+				{ return PTP_CLASS_V1_IPV6;  }
+				else if(data[48 + 1] == 2)
+				{ return PTP_CLASS_V2_IPV6;  }
+				
+				return 0;
+			}
+	
+		}
+	}
 	return 0;
 }
 
 static inline void skb_tx_timestamp_local(struct sk_buff *skb)
 {
-
 	if( skb->dev != NULL && skb->dev->phydev != NULL && skb->dev->phydev->mii_ts != NULL )
 	{ 
 		int type = classify_ptp_raw_local(skb);
 		if(type != 0)
 		{
-			skb_shinfo(skb)->tx_flags |= SKBTX_IN_PROGRESS;
-	
-			struct mii_timestamper *mii_ts = skb->dev->phydev->mii_ts;
-			struct sk_buff *clone = skb_clone_sk(skb);
-			if (clone == NULL)
-			{ return; }
+			struct ptp_header *hdr = ptp_parse_header(skb, type);
 			
-			//K.J. - we need to make sure that the skb->data == skb->mac pointer before we send it back
-			//		 up the error queue. Other applications like gptp use the original packet data to 
-			//		 match sent packets with their timestamps. The bcmgenet driver may do skb_push and skb_pull
-			//	 	 operations that move the data ptr away from the mac ptr.  
-			//		 Applications that call	recvmsg(socket_id, &message_header, MSG_ERRQUEUE); to retreive timestamps
-			//		 will receive a copy of what skb->data points to as a copy of the "original packet data".  But the
-			//		 "original packet data" is really what skb->mac points to. The solution is to clone the skb and set
-			//		 skb->data back to skb->mac so that the application receives the proper start of the "original packet data".
-			
-			
-			int mac_offset = skb_mac_offset(clone);
-			skb_pull(clone, mac_offset);		
-			///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-			
-			
-			mii_ts->txtstamp(mii_ts, clone, type);
-			return;
+			if( (hdr->tsmt & 0x0F) < 4)
+			{
+				skb_shinfo(skb)->tx_flags |= SKBTX_IN_PROGRESS;
+		
+				struct mii_timestamper *mii_ts = skb->dev->phydev->mii_ts;
+				struct sk_buff *clone = skb_clone_sk(skb);
+				if (clone == NULL)
+				{ return; }
+				
+				//K.J. - we need to make sure that the skb->data == skb->mac pointer before we send it back
+				//		 up the error queue. Other applications like gptp use the original packet data to 
+				//		 match sent packets with their timestamps. The bcmgenet driver may do skb_push and skb_pull
+				//	 	 operations that move the data ptr away from the mac ptr.  
+				//		 Applications that call	recvmsg(socket_id, &message_header, MSG_ERRQUEUE); to retreive timestamps
+				//		 will receive a copy of what skb->data points to as a copy of the "original packet data".  But the
+				//		 "original packet data" is really what skb->mac points to. The solution is to clone the skb and set
+				//		 skb->data back to skb->mac so that the application receives the proper start of the "original packet data".
+				
+				
+				int mac_offset = skb_mac_offset(clone);
+				skb_pull(clone, mac_offset);		
+				///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+				
+				
+				mii_ts->txtstamp(mii_ts, clone, type);
+				return;
+			}
 		}
 	}
 	
