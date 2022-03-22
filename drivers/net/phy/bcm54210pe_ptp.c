@@ -99,6 +99,15 @@
 	
 #define READ_END_REG			0x0885
 
+#define RDB_P1588_NSE_DPLL_NCO_6	0xA7F
+#define RDB_P1588_CONTROL_DEBUG		0xA8E
+#define RDB_P1588_HEARTBEAT_0		0xA86
+#define RDB_P1588_HEARTBEAT_1		0xA87
+#define RDB_P1588_HEARTBEAT_2		0xA88
+#define RDB_P1588_HEARTBEAT_3		0xAEC
+#define RDB_P1588_HEARTBEAT_4		0xAED
+
+
 #define FIFO_READ_DELAY			100*HZ/1000 /* delay milliseconds in jiffies */
 
 int force_logging = 0;
@@ -618,34 +627,54 @@ static int bcm54210pe_config_1588(struct phy_device *phydev)
 static int bcm54210pe_gettime(struct ptp_clock_info *info, struct timespec64 *ts)
 {
 	
-	u16 Time[5];
+	u16 Time[5] = {0,0,0,0,0};
 	
 	struct bcm54210pe_ptp *ptp = container_of(info, struct bcm54210pe_ptp, caps);
 	struct phy_device *phydev = ptp->chosen->phydev;
 
 	//mutex_lock(&ptp->clock_lock);
 	
-	phy_lock_mdio_bus(phydev);
-	
+	//phy_lock_mdio_bus(phydev);
+
+	/*
 	// Trigger sync which will capture the heartbeat counter
-	
-	__bcm_phy_write_exp(phydev, NSE_DPPL_NCO_6_REG, 0xF000);
-	__bcm_phy_write_exp(phydev, NSE_DPPL_NCO_6_REG, 0xF020);
+	bcm_phy_write_exp(phydev, NSE_DPPL_NCO_6_REG, 0xF000);
+	bcm_phy_write_exp(phydev, NSE_DPPL_NCO_6_REG, 0xF020);
 
 	// Set Heart beat time read start
-	__bcm_phy_write_exp(phydev, CTR_DBG_REG, 0x400);
-	Time[4] = __bcm_phy_read_exp(phydev, HEART_BEAT_REG4);
-	Time[3] = __bcm_phy_read_exp(phydev, HEART_BEAT_REG3);
-	Time[2] = __bcm_phy_read_exp(phydev, HEART_BEAT_REG2);
-	Time[1] = __bcm_phy_read_exp(phydev, HEART_BEAT_REG1);
-	Time[0] = __bcm_phy_read_exp(phydev, HEART_BEAT_REG0);
-	
-	// Set read end bit
-	__bcm_phy_write_exp(phydev, CTR_DBG_REG, 0x800);
-	__bcm_phy_write_exp(phydev, CTR_DBG_REG, 0x000);
+	bcm_phy_write_exp(phydev, CTR_DBG_REG, 0x400);
+	Time[4] = bcm_phy_read_exp(phydev, HEART_BEAT_REG4);
+	Time[3] = bcm_phy_read_exp(phydev, HEART_BEAT_REG3);
+	Time[2] = bcm_phy_read_exp(phydev, HEART_BEAT_REG2);
+	Time[1] = bcm_phy_read_exp(phydev, HEART_BEAT_REG1);
+	Time[0] = bcm_phy_read_exp(phydev, HEART_BEAT_REG0);
 
-	phy_unlock_mdio_bus(phydev);
-	
+	// Set read end bit
+	bcm_phy_write_exp(phydev, CTR_DBG_REG, 0x800);
+	bcm_phy_write_exp(phydev, CTR_DBG_REG, 0x000);
+	*/
+
+	int ret1, ret2, ret3, ret4, ret5, ret6;
+
+	ret1 = bcm_phy_modify_rdb(phydev, RDB_P1588_NSE_DPLL_NCO_6, 0xF000);
+	ret2 = bcm_phy_write_rdb(phydev, RDB_P1588_NSE_DPLL_NCO_6, 0xF020);
+	ret3 = bcm_phy_write_rdb(phydev, RDB_P1588_CONTROL_DEBUG, 0x800);
+	Time[4] = bcm_phy_read_rdb(phydev, RDB_P1588_HEARTBEAT_4);
+	Time[3] = bcm_phy_read_rdb(phydev, RDB_P1588_HEARTBEAT_3);
+	Time[2] = bcm_phy_read_rdb(phydev, RDB_P1588_HEARTBEAT_2);
+	Time[1] = bcm_phy_read_rdb(phydev, RDB_P1588_HEARTBEAT_1);
+	Time[0] = bcm_phy_read_rdb(phydev, RDB_P1588_HEARTBEAT_0);
+
+	printk("Rets: %u:%u:%u:%u:%u\n", ret1, ret2, ret3, ret4, ret5);
+	printk("Time: %hu:%hu:%hu:%hu:%hu\n", Time[4], Time[3], Time[2], Time[1], Time[0]);
+
+
+	ret4 = bcm_phy_write_rdb(phydev, RDB_P1588_CONTROL_DEBUG, 0xC00);
+	ret5 = bcm_phy_write_rdb(phydev, RDB_P1588_CONTROL_DEBUG, 0x000);
+	//phy_unlock_mdio_bus(phydev);
+	printk("Rets: %u:%u:%u:%u:%u\n", ret1, ret2, ret3, ret4, ret5);
+	printk("Time: %hu:%hu:%hu:%hu:%hu\n", Time[4], Time[3], Time[2], Time[1], Time[0]);
+
 	//mutex_unlock(&ptp->clock_lock);
 	
 	u64 time_stamp = ts_to_ns(Time);
