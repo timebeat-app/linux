@@ -84,26 +84,28 @@ MODULE_PARM_DESC(skip_umac_reset, "Skip UMAC reset step");
 
 static inline int classify_ptp_raw_local(struct sk_buff *skb)
 {
-	int ret_val = 0;;
+	//int ret_val = 0;
+	u8 *data;
 	
 	struct ethhdr *eth_header = eth_hdr(skb);
+	struct iphdr *ip_header = ip_hdr(skb);
+
 	if(eth_header == NULL)
 	{ return 0; }
 
-	u8 *data = ((u8 *)eth_header) + 14;
-	
-	if(eth_header->h_proto == 0xf788) 						//Layer 2 (Automotive, 802.1AS, etc.)
+	data = ((u8 *)eth_header) + ETH_HLEN;
+
+	if(eth_header->h_proto == ntohs(ETH_P_1588) 						//Layer 2 (Automotive, 802.1AS, etc.)
 	{ 
 		return data[1] == 2 ? PTP_CLASS_V2_L2 : 0;
 	}
-	else if( (eth_header->h_proto == 0x0008 )				//IPv4
-			&& (data[9] == 17) 								//UDP
-			&& ( (ntohs(*((u16 *)&data[6])) & 0x1fff) == 0) //No Fragment Offset
-			)
-	{		
+	else if(eth_header->h_proto == ntohs(ETH_P_IP)				//IPv4
+			&& ip_header->protocol == ntohs(IPPROTO_UDP) 								//UDP
+			&& ntohs(ip_header->frag_off) & 0x1fff == 0) //No Fragment Offset
+			{
 		data += ((data[0] & 0x0f) * 4);
 		
-		if( ntohs(*((u16 *)&data[2])) == 319 ) 				//Destination Port = PTP
+		if( ntohs(*((u16 *)&data[2])) == PTP_EV_PORT ) 				//Destination Port = PTP
 		{
 			data += 8;
 			
@@ -116,11 +118,11 @@ static inline int classify_ptp_raw_local(struct sk_buff *skb)
 		}
 	
 	}
-	else if( (eth_header->h_proto == 0xDD86) ) 				//IPv6
+	else if( (eth_header->h_proto == ntohs(ETH_P_IPV6))) ) 				//IPv6
 	{
-		if((data[6] == 17)) 								//UDP
+		if((data[6] == IPPROTO_UDP)) 								//UDP
 		{		
-			if(ntohs(*((u16 *)&data[42])) == 319) 			//Destination Port = PTP
+			if(ntohs(*((u16 *)&data[42])) == PTP_EV_PORT) 			//Destination Port = PTP
 			{					
 				if(data[48 + 1] == 1)
 				{ return PTP_CLASS_V1_IPV6;  }
