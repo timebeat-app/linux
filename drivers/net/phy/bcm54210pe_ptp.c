@@ -581,29 +581,30 @@ static int bcm54210pe_config_1588(struct phy_device *phydev)
 
 	err = bcm_phy_write_exp(phydev, PTP_INTERRUPT_REG, 0x3c02 );
 
-	err =  bcm_phy_write_exp(phydev, GLOBAL_TIMESYNC_REG, 0x0001); //Enable global timesync register.
-	err =  bcm_phy_write_exp(phydev, EXT_1588_SLICE_REG, 0x0101); //ENABLE TX and RX slice 1588
-	err =  bcm_phy_write_exp(phydev, TX_EVENT_MODE_REG, 0xFF00); //Add 80bit timestamp + NO CPU MODE in TX
-	err =  bcm_phy_write_exp(phydev, RX_EVENT_MODE_REG, 0xFF00); //Add 32+32 bits timestamp + NO CPU mode in RX
-	err =  bcm_phy_write_exp(phydev, TIMECODE_SEL_REG, 0x0101); //Select 80 bit counter
+	err |= bcm_phy_write_exp(phydev, GLOBAL_TIMESYNC_REG, 0x0001); //Enable global timesync register.
+	err |= bcm_phy_write_exp(phydev, EXT_1588_SLICE_REG, 0x0101); //ENABLE TX and RX slice 1588
+	err |= bcm_phy_write_exp(phydev, TX_EVENT_MODE_REG, 0xFF00); //Add 80bit timestamp + NO CPU MODE in TX
+	err |= bcm_phy_write_exp(phydev, RX_EVENT_MODE_REG, 0xFF00); //Add 32+32 bits timestamp + NO CPU mode in RX
+	err |= bcm_phy_write_exp(phydev, TIMECODE_SEL_REG, 0x0101); //Select 80 bit counter
+	err |= bcm_phy_write_exp(phydev, TXRX_1588_OPTION_REG, 0x0404); // TODO: Lasse - Disables PTP v2 version check (RX and TX) - probably incompatible with 1588-2019
 
 
-	err =  bcm_phy_write_exp(phydev, TX_TSCAPTURE_ENABLE_REG, 0x0001); //Enable timestamp capture in TX 
-	err =  bcm_phy_write_exp(phydev, RX_TSCAPTURE_ENABLE_REG, 0x0001); //Enable timestamp capture in RX
+	err |=  bcm_phy_write_exp(phydev, TX_TSCAPTURE_ENABLE_REG, 0x0001); //Enable timestamp capture in TX
+	err |=  bcm_phy_write_exp(phydev, RX_TSCAPTURE_ENABLE_REG, 0x0001); //Enable timestamp capture in RX
 
 	//Load Original Time Code Register
-	err =  bcm_phy_write_exp(phydev, ORIGINAL_TIME_CODE_0, 0x0064);
-	err =  bcm_phy_write_exp(phydev, ORIGINAL_TIME_CODE_1, 0x0064);
-	err =  bcm_phy_write_exp(phydev, ORIGINAL_TIME_CODE_2, 0x0064);
-	err =  bcm_phy_write_exp(phydev, ORIGINAL_TIME_CODE_3, 0x0064);
-	err =  bcm_phy_write_exp(phydev, ORIGINAL_TIME_CODE_4, 0x0064);
+	//err =  bcm_phy_write_exp(phydev, ORIGINAL_TIME_CODE_0, 0x0064);
+	//err =  bcm_phy_write_exp(phydev, ORIGINAL_TIME_CODE_1, 0x0064);
+	//err =  bcm_phy_write_exp(phydev, ORIGINAL_TIME_CODE_2, 0x0064);
+	//err =  bcm_phy_write_exp(phydev, ORIGINAL_TIME_CODE_3, 0x0064);
+	//err =  bcm_phy_write_exp(phydev, ORIGINAL_TIME_CODE_4, 0x0064);
 
 	//Enable shadow register
 	err = bcm_phy_write_exp(phydev, SHADOW_REG_CONTROL, 0x0000);
 	err = bcm_phy_write_exp(phydev, SHADOW_REG_LOAD, 0x07c0);
 
 	//1n ts resolution
-	err = bcm_phy_write_exp(phydev, DPLL_SELECT_REG, 0x0160);
+	err = bcm_phy_write_exp(phydev, DPLL_SELECT_REG, 0x0160); // TODO: Lasse - I doubt this is a thing, not an actual register
 
 	err =  bcm_phy_write_exp(phydev, NSE_DPPL_NCO_6_REG, 0xF020); //NCO Register 6 => Enable SYNC_OUT pulse train and Internal Syncout ad framesync
 
