@@ -630,8 +630,6 @@ static int bcm54210pe_gettime(struct ptp_clock_info *info, struct timespec64 *ts
 	struct bcm54210pe_ptp *ptp = container_of(info, struct bcm54210pe_ptp, caps);
 	struct phy_device *phydev = ptp->chosen->phydev;
 
-        printk("0x087: %u\n",bcm_phy_read_rdb(phydev, 0x087));
-
         // EXP approach
 	// Trigger sync which will capture the heartbeat counter
 	bcm_phy_write_exp(phydev, NSE_DPPL_NCO_6_REG, 0xF000);
