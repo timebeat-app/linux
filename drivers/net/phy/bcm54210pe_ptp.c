@@ -630,11 +630,7 @@ static int bcm54210pe_gettime(struct ptp_clock_info *info, struct timespec64 *ts
 	struct bcm54210pe_ptp *ptp = container_of(info, struct bcm54210pe_ptp, caps);
 	struct phy_device *phydev = ptp->chosen->phydev;
 
-	//mutex_lock(&ptp->clock_lock);
-	
         printk("0x087: %u\n",bcm_phy_read_rdb(phydev, 0x087));
-
-	//phy_lock_mdio_bus(phydev);
 
         // EXP approach
 	// Trigger sync which will capture the heartbeat counter
@@ -652,58 +648,6 @@ static int bcm54210pe_gettime(struct ptp_clock_info *info, struct timespec64 *ts
 	// Set read end bit
 	bcm_phy_write_exp(phydev, CTR_DBG_REG, 0x800);
 	bcm_phy_write_exp(phydev, CTR_DBG_REG, 0x000);
-
-	/*
-	int ret1, ret2, ret3, ret4, ret5, ret6;
-
-	printk("Time (1): %hu:%hu:%hu:%hu:%hu\n", Time[4], Time[3], Time[2], Time[1], Time[0]);
-
-	// Trigger sync which will capture the heartbeat counter
-	ret1 = bcm_phy_write_rdb(phydev, RDB_P1588_NSE_DPLL_NCO_6, 0xE000);
-	ret2 = bcm_phy_write_rdb(phydev, RDB_P1588_NSE_DPLL_NCO_6, 0xE020);
-
-	// Set Heart beat time read start
-	ret3 = bcm_phy_write_rdb(phydev, RDB_P1588_CONTROL_DEBUG, 0x0800);
-	Time[4] = bcm_phy_read_rdb(phydev, RDB_P1588_HEARTBEAT_4);
-	Time[3] = bcm_phy_read_rdb(phydev, RDB_P1588_HEARTBEAT_3);
-	Time[2] = bcm_phy_read_rdb(phydev, RDB_P1588_HEARTBEAT_2);
-	Time[1] = bcm_phy_read_rdb(phydev, RDB_P1588_HEARTBEAT_1);
-	Time[0] = bcm_phy_read_rdb(phydev, RDB_P1588_HEARTBEAT_0);
-
-	// Set read end bit
-	ret4 = bcm_phy_write_rdb(phydev, RDB_P1588_CONTROL_DEBUG, 0x0C00);
-	ret5 = bcm_phy_write_rdb(phydev, RDB_P1588_CONTROL_DEBUG, 0x0000);
-
-	printk("Rets: %u:%u:%u:%u:%u\n", ret1, ret2, ret3, ret4, ret5);
-	printk("Time (2): %hu:%hu:%hu:%hu:%hu\n", Time[4], Time[3], Time[2], Time[1], Time[0]);
-        */
-        /*
-	// RDB approach
-
-	int ret1, ret2, ret3, ret4, ret5, ret6;
-
-	ret1 = bcm_phy_write_rdb(phydev, RDB_P1588_NSE_DPLL_NCO_6, 0xF000);
-        return 0;
-	ret2 = bcm_phy_write_rdb(phydev, RDB_P1588_NSE_DPLL_NCO_6, 0xF020);
-	ret3 = bcm_phy_write_rdb(phydev, RDB_P1588_CONTROL_DEBUG, 0x800);
-	Time[4] = bcm_phy_read_rdb(phydev, RDB_P1588_HEARTBEAT_4);
-	Time[3] = bcm_phy_read_rdb(phydev, RDB_P1588_HEARTBEAT_3);
-	Time[2] = bcm_phy_read_rdb(phydev, RDB_P1588_HEARTBEAT_2);
-	Time[1] = bcm_phy_read_rdb(phydev, RDB_P1588_HEARTBEAT_1);
-	Time[0] = bcm_phy_read_rdb(phydev, RDB_P1588_HEARTBEAT_0);
-
-	printk("Rets: %u:%u:%u:%u:%u\n", ret1, ret2, ret3, ret4, ret5);
-	printk("Time: %hu:%hu:%hu:%hu:%hu\n", Time[4], Time[3], Time[2], Time[1], Time[0]);
-
-
-	ret4 = bcm_phy_write_rdb(phydev, RDB_P1588_CONTROL_DEBUG, 0xC00);
-	ret5 = bcm_phy_write_rdb(phydev, RDB_P1588_CONTROL_DEBUG, 0x000);
-	//phy_unlock_mdio_bus(phydev);
-	printk("Rets: %u:%u:%u:%u:%u\n", ret1, ret2, ret3, ret4, ret5);
-	printk("Time: %hu:%hu:%hu:%hu:%hu\n", Time[4], Time[3], Time[2], Time[1], Time[0]);
-        */
-
-	//mutex_unlock(&ptp->clock_lock);
 	
 	u64 time_stamp = ts_to_ns(Time);
 			
@@ -764,96 +708,48 @@ static int bcm54210pe_adjfine(struct ptp_clock_info *info, long scaled_ppm)
 {	
 	print_function_message("bcm54210pe_adjfine", "scaled_ppm", scaled_ppm);
 	
-	int err = 0; 
-	u64 adj;
+	int err;
 	u16 lo, hi;
+	u32 corrected_8ns_interval, base_8ns_interval;
+	bool negative;
 
 	struct bcm54210pe_ptp *ptp = container_of(info, struct bcm54210pe_ptp, caps);
 	struct phy_device *phydev = ptp->chosen->phydev;
 
-	/*
-	if (scaled_ppm < 0) {
-		err = -EINVAL; 
-		goto finish;
-	}
-	*/
-	/*
-	bool negative = false;
-        if ( scaled_ppp < 0 ) {
+	negative = false;
+        if ( scaled_ppm < 0 ) {
 		negative = true;
-		scaled_ppm *= -1;
+		scaled_ppm = -scaled_ppm;
 	}
-	*/
 
-	scaled_ppm = div_s64(scaled_ppm, 500);
+	// This is not completely accurate but very fast
+	scaled_ppm >>= 7;
 
-	long base = 1 << 31;
-	printk("Base: %i\n", base);
-	printk("Scaled PPM (long): %ld\n", scaled_ppm);
-	printk("Scaled PPM (int): %d\n", (int)scaled_ppm);
-	u32 total_adj = (u32) (base + scaled_ppm);
-	printk("Total adj: %u\n", total_adj);
+	base_8ns_interval = 1 << 31;
 
+	if (negative) {
+		corrected_8ns_interval = base_8ns_interval - scaled_ppm;
+	} else {
+		corrected_8ns_interval = base_8ns_interval + scaled_ppm;
+	}
 
-	hi = (int) (total_adj & 0xFFFF0000) >> 16;
-	lo = (int) (total_adj & 0x0000FFFF);
+	hi = (corrected_8ns_interval & 0xFFFF0000) >> 16;
+	lo = (corrected_8ns_interval & 0x0000FFFF);
 
-	printk("HI: %hu\n", hi );
-	printk("LO: %hu\n", lo );
-	int ret1, ret2, ret3, ret4, ret5, ret6;
+	// Set freq_mdio_sel to 1
+	bcm_phy_write_exp(phydev, NSE_DPPL_NCO_2_2_REG, 0x4000);
 
-	//ret1 = bcm_phy_read_exp(phydev, NSE_DPPL_NCO_2_2_REG);
-	//ret2 = bcm_phy_read_exp(phydev, NSE_DPPL_NCO_1_LSB_REG);
-	//ret3 = bcm_phy_read_exp(phydev, NSE_DPPL_NCO_1_MSB_REG);
-	//printk("rets(1): %d:%d:%d\n", ret1, ret2, ret3);
+	// Load 125MHz frequency reqcntrl
+	bcm_phy_write_exp(phydev, NSE_DPPL_NCO_1_MSB_REG, hi);
+	bcm_phy_write_exp(phydev, NSE_DPPL_NCO_1_LSB_REG, lo);
 
-	//ret4 = 0;
-	ret4 = bcm_phy_write_exp(phydev, NSE_DPPL_NCO_2_2_REG, 0x4000);
-	//ret5 = bcm_phy_write_exp(phydev, NSE_DPPL_NCO_1_MSB_REG, 0xC000);
-	ret5 = bcm_phy_write_exp(phydev, NSE_DPPL_NCO_1_MSB_REG, hi);
-	ret6 = bcm_phy_write_exp(phydev, NSE_DPPL_NCO_1_LSB_REG, lo);
-	//ret6 = bcm_phy_read_exp(phydev, NSE_DPPL_NCO_1_MSB_REG);
-	printk("rets(2): %d:%d:%d\n", ret4, ret5, ret6);
-
-
-	//bcm_phy_write_exp(phydev, SHADOW_REG_CONTROL, 0x0000);
+	// On next framesync load freq from freqcntrl
 	bcm_phy_write_exp(phydev, SHADOW_REG_LOAD, 0x0040);
-	//Force sync
-	bcm_phy_write_exp(phydev, NSE_DPPL_NCO_6_REG, 0xD020);
-	//bcm_phy_write_exp(phydev, NSE_DPPL_NCO_6_REG, 0xE000);
 
-	//SHADOW_REG_CONTROL
+	// Trigger framesync
+	err = bcm_phy_write_exp(phydev, NSE_DPPL_NCO_6_REG, 0xD020);
+
 	return err;
-	//ret2 = bcm_phy_write_exp(phydev, NSE_DPPL_NCO_1_LSB_REG, lo);
-	//ret3 = bcm_phy_write_exp(phydev, NSE_DPPL_NCO_1_MSB_REG, hi);
-
-	/*
-	adj = scaled_ppm;
-	adj <<= 13;
-	adj = div_u64(adj, 15625);
-
-	hi = (adj >> 16);
-	lo = adj & 0xffff;
-
-	mutex_lock(&ptp->timeset_lock);
-	phy_lock_mdio_bus(phydev);
-
-	__bcm_phy_write_exp(phydev, NSE_DPPL_NCO_6_REG, 0xE000);
-	__bcm_phy_write_exp(phydev, NSE_DPPL_NCO_1_LSB_REG, lo);
-	__bcm_phy_write_exp(phydev, NSE_DPPL_NCO_1_MSB_REG, hi);	
-
-	//Enable shadow register
-	__bcm_phy_write_exp(phydev, SHADOW_REG_CONTROL, 0x0000);
-	__bcm_phy_write_exp(phydev, SHADOW_REG_LOAD, 0x0340);
-	//Force sync
-	__bcm_phy_write_exp(phydev, NSE_DPPL_NCO_6_REG, 0xE020); 
-	
-	phy_unlock_mdio_bus(phydev);
-	
-finish:
-	mutex_unlock(&ptp->timeset_lock);
-	return err;
-	*/
 }
 
 static int bcm54210pe_adjtime(struct ptp_clock_info *info, s64 delta)
@@ -1003,7 +899,7 @@ int bcm54210pe_hwtstamp(struct mii_timestamper *mii_ts, struct ifreq *ifr)
 static const struct ptp_clock_info bcm54210pe_clk_caps = {
         .owner          = THIS_MODULE,
         .name           = "BCM54210PE_PHC",
-        .max_adj        = S32_MAX,
+        .max_adj        = 100000000,
         .n_alarm        = 0,
         .n_pins         = 0,
         .n_ext_ts       = 0,
