@@ -81,6 +81,7 @@
 #define RX_TS_OFFSET_LSB		0x0844
 #define RX_TS_OFFSET_MSB		0x0845
 #define NSE_DPPL_NCO_6_REG		0x087F
+#define NSE_DPPL_NCO_4_REG		0x087B
 #define NSE_DPPL_NCO_1_LSB_REG		0x0873
 #define NSE_DPPL_NCO_1_MSB_REG		0x0874
 
@@ -352,21 +353,6 @@ static void read_txrx_timestamp_thread(struct work_struct *w)
 			if (txrx) 
 			{ schedule_work_on(time_stamp_thread_cpu, &priv->txts_work);}			
 		}
-			
-		//Kyle - Check if this logic is correct ...	
-			
-		/*
-		// Trigger sync
-		bcm_phy_write_exp(phydev, NSE_DPPL_NCO_6_REG, 0xF000);
-		bcm_phy_write_exp(phydev, NSE_DPPL_NCO_6_REG, 0xF020);
-
-		// Set Heart beat time read start
-		bcm_phy_write_exp(phydev, CTR_DBG_REG, 0x400);
-		// Set read end bit
-		bcm_phy_write_exp(phydev, CTR_DBG_REG, 0x800);
-		bcm_phy_write_exp(phydev, CTR_DBG_REG, 0x000);
-		*/
-		
 	}
 	
 	schedule_delayed_work_on(time_stamp_thread_cpu, &priv->fifo_read_work_delayed, usecs_to_jiffies(POLL_INTERVAL_USECS));
@@ -571,6 +557,14 @@ irqreturn_t bcm54210pe_handle_interrupt(int irq, void * phy_dat)
 	return IRQ_WAKE_THREAD;
 }
 
+static int bcm54210pe_enable_pps(struct phy_device *phydev)
+{
+
+	bcm_phy_write_exp(phydev, NSE_DPPL_NCO_4_REG, 0x0004);
+	bcm_phy_modify_exp(phydev, NSE_DPPL_NCO_6_REG,0x0003,0x0002);
+	return 0;
+}
+
 
 static int bcm54210pe_config_1588(struct phy_device *phydev)
 {
@@ -608,6 +602,7 @@ static int bcm54210pe_config_1588(struct phy_device *phydev)
 	err =  bcm_phy_write_exp(phydev, NSE_DPPL_NCO_6_REG, 0xF020); //NCO Register 6 => Enable SYNC_OUT pulse train and Internal Syncout ad framesync
 
 
+	bcm54210pe_enable_pps(phydev);
 
 	//15, 33 or 41 - experimental
 	printk("DEBUG: GPIO %d IRQ %d\n", 15, gpio_to_irq(41));
@@ -632,8 +627,10 @@ static int bcm54210pe_gettime(struct ptp_clock_info *info, struct timespec64 *ts
 
         // EXP approach
 	// Trigger sync which will capture the heartbeat counter
+	//bcm_phy_write_exp(phydev, NSE_DPPL_NCO_6_REG, 0xF000);
 	bcm_phy_write_exp(phydev, NSE_DPPL_NCO_6_REG, 0xF000);
-	bcm_phy_write_exp(phydev, NSE_DPPL_NCO_6_REG, 0xF020);
+	bcm_phy_modify_exp(phydev, NSE_DPPL_NCO_6_REG, 0x003C, 0x0020);
+	//bcm_phy_write_exp(phydev, NSE_DPPL_NCO_6_REG, 0xF020);
 
 	// Set Heart beat time read start
 	bcm_phy_write_exp(phydev, CTR_DBG_REG, 0x400);
@@ -670,9 +667,9 @@ static int bcm54210pe_settime(struct ptp_clock_info *info, const struct timespec
 	struct bcm54210pe_ptp *ptp = container_of(info, struct bcm54210pe_ptp, caps);
 	struct phy_device *phydev = ptp->chosen->phydev;
 
-	var[4] = (int) (ts->tv_sec 	& 0x0000FFFF00000000) >> 32;
-	var[3] = (int) (ts->tv_sec 	& 0x00000000FFFF0000) >> 16; 
-	var[2] = (int) (ts->tv_sec 	& 0x000000000000FFFF);
+	var[4] = (int) (ts->tv_sec  & 0x0000FFFF00000000) >> 32;
+	var[3] = (int) (ts->tv_sec  & 0x00000000FFFF0000) >> 16;
+	var[2] = (int) (ts->tv_sec  & 0x000000000000FFFF);
 	var[1] = (int) (ts->tv_nsec & 0x00000000FFFF0000) >> 16;
 	var[0] = (int) (ts->tv_nsec & 0x000000000000FFFF); 
 
