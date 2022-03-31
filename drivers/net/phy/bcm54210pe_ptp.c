@@ -563,14 +563,13 @@ static int bcm54210pe_enable_pps(struct phy_device *phydev)
 	int err;
 
 	// Set sync out divider
-	bcm_phy_write_exp(phydev, NSE_DPPL_NCO_4_REG, 0x0008);
-
-
-	// On next framesync load sync out divider from
-	bcm_phy_write_exp(phydev, SHADOW_REG_LOAD, 0x0400);
+	bcm_phy_write_exp(phydev, NSE_DPPL_NCO_4_REG, 0x0800);
 
 	// Trigger framesync
 	err = bcm_phy_modify_exp(phydev, NSE_DPPL_NCO_6_REG, 0x003C, 0x0020);
+
+	// On next framesync load sync out divider from
+	bcm_phy_write_exp(phydev, SHADOW_REG_LOAD, 0x0200);
 
 	bcm_phy_modify_exp(phydev, NSE_DPPL_NCO_6_REG,0x0003,0x0002);
 
