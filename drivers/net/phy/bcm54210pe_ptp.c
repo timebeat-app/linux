@@ -560,9 +560,21 @@ irqreturn_t bcm54210pe_handle_interrupt(int irq, void * phy_dat)
 static int bcm54210pe_enable_pps(struct phy_device *phydev)
 {
 
-	bcm_phy_write_exp(phydev, NSE_DPPL_NCO_4_REG, 0x0004);
+	int err;
+
+	// Set sync out divider
+	bcm_phy_write_exp(phydev, NSE_DPPL_NCO_4_REG, 0x0008);
+
+
+	// On next framesync load sync out divider from
+	bcm_phy_write_exp(phydev, SHADOW_REG_LOAD, 0x0400);
+
+	// Trigger framesync
+	err = bcm_phy_modify_exp(phydev, NSE_DPPL_NCO_6_REG, 0x003C, 0x0020);
+
 	bcm_phy_modify_exp(phydev, NSE_DPPL_NCO_6_REG,0x0003,0x0002);
-	return 0;
+
+	return err;
 }
 
 
@@ -675,7 +687,7 @@ static int bcm54210pe_settime(struct ptp_clock_info *info, const struct timespec
 
 	phy_lock_mdio_bus(phydev);
 
-	__bcm_phy_write_exp(phydev, NSE_DPPL_NCO_6_REG, 0xF000);
+	//__bcm_phy_write_exp(phydev, NSE_DPPL_NCO_6_REG, 0xF000);
 
 	//Load Original Time Code Register
 	__bcm_phy_write_exp(phydev, ORIGINAL_TIME_CODE_0, var[0]);
@@ -688,7 +700,9 @@ static int bcm54210pe_settime(struct ptp_clock_info *info, const struct timespec
 	__bcm_phy_write_exp(phydev, SHADOW_REG_CONTROL, 0x0000);
 	__bcm_phy_write_exp(phydev, SHADOW_REG_LOAD, 0x0400);
 
-	__bcm_phy_write_exp(phydev, NSE_DPPL_NCO_6_REG, 0xE020); //NCO Register 6 => Enable SYNC_OUT pulse train and Internal Syncout ad framesync
+	__bcm_phy_modify_exp(phydev, NSE_DPPL_NCO_6_REG, 0x003C, 0x0020);
+
+	//__bcm_phy_write_exp(phydev, NSE_DPPL_NCO_6_REG, 0xE020); //NCO Register 6 => Enable SYNC_OUT pulse train and Internal Syncout ad framesync
 
 	phy_unlock_mdio_bus(phydev);
 
@@ -742,7 +756,8 @@ static int bcm54210pe_adjfine(struct ptp_clock_info *info, long scaled_ppm)
 	bcm_phy_write_exp(phydev, SHADOW_REG_LOAD, 0x0040);
 
 	// Trigger framesync
-	err = bcm_phy_write_exp(phydev, NSE_DPPL_NCO_6_REG, 0xD020);
+	//err = bcm_phy_write_exp(phydev, NSE_DPPL_NCO_6_REG, 0xD020);
+	err = bcm_phy_modify_exp(phydev, NSE_DPPL_NCO_6_REG, 0x003C, 0x0020);
 
 	return err;
 }
