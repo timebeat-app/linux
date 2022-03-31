@@ -89,6 +89,10 @@
 #define NSE_DPPL_NCO_2_1_REG		0x0876
 #define NSE_DPPL_NCO_2_2_REG		0x0877
 
+#define NSE_DPPL_NCO_3_0_REG		0x0878
+#define NSE_DPPL_NCO_3_1_REG		0x0879
+#define NSE_DPPL_NCO_3_2_REG		0x087A
+
 #define DPLL_SELECT_REG			0x085b
 #define TIMECODE_SEL_REG		0x08C3
 #define SHADOW_REG_CONTROL		0x085C
@@ -562,16 +566,19 @@ static int bcm54210pe_enable_pps(struct phy_device *phydev)
 
 	int err;
 
-	// Set sync out divider
-	bcm_phy_write_exp(phydev, NSE_DPPL_NCO_4_REG, 0x0800);
+	bcm_phy_write_exp(phydev, NSE_DPPL_NCO_6_REG,0xD002); // Working
 
-	// Trigger framesync
-	err = bcm_phy_modify_exp(phydev, NSE_DPPL_NCO_6_REG, 0x003C, 0x0020);
+	// Set sync out divider
+	bcm_phy_write_exp(phydev, NSE_DPPL_NCO_3_0_REG, 0x5940);
+	bcm_phy_write_exp(phydev, NSE_DPPL_NCO_3_1_REG, 0xC773);
+	bcm_phy_write_exp(phydev, NSE_DPPL_NCO_3_2_REG, 0x003F);
+
 
 	// On next framesync load sync out divider from
 	bcm_phy_write_exp(phydev, SHADOW_REG_LOAD, 0x0200);
 
-	bcm_phy_modify_exp(phydev, NSE_DPPL_NCO_6_REG,0x0003,0x0002);
+	// Trigger framesync
+	err = bcm_phy_modify_exp(phydev, NSE_DPPL_NCO_6_REG, 0x003C, 0x0020);
 
 	return err;
 }
