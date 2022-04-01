@@ -1061,7 +1061,7 @@ int bcm54210pe_probe(struct phy_device *phydev)
 
 	// Caps
 	memcpy(&bcm54210pe->ptp->caps, &bcm54210pe_clk_caps, sizeof(bcm54210pe_clk_caps));
-	bcm54210pe->ptp->caps.pin_config = &bcm54210pe->sdp_config;
+	bcm54210pe->ptp->caps.pin_config = bcm54210pe->sdp_config;
 
 	// Mutex
 	mutex_init(&bcm54210pe->ptp->clock_lock);
