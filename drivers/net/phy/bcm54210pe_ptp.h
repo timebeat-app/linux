@@ -16,13 +16,9 @@
 #define CIRCULAR_BUFFER_COUNT		8
 #define CIRCULAR_BUFFER_ITEM_COUNT	32
 
-
-irqreturn_t bcm54210pe_handle_interrupt(int irq, void * phy_dat);
-irqreturn_t bcm54210pe_handle_interrupt_thread(int irq, void * phy_dat);
-
 struct bcm54210pe_ptp {
-        struct ptp_clock_info caps;
-        struct ptp_clock *ptp_clock;
+	struct ptp_clock_info caps;
+	struct ptp_clock *ptp_clock;
 	struct mutex clock_lock;
 	struct bcm54210pe_private *chosen;
 	struct mutex timeset_lock;
@@ -49,12 +45,15 @@ struct bcm54210pe_private {
 	struct phy_device *phydev;
 	struct bcm54210pe_ptp *ptp;
 	struct mii_timestamper mii_ts;
-	
+	struct ptp_pin_desc sdp_config[2];
+
 	int ts_tx_config;
 	int tx_rx_filter;
 	
 	bool one_step;
-	
+	bool pps_out_en;
+	bool pps_in_en;
+
 	struct sk_buff_head tx_skb_queue;
 		
 	struct bcm54210pe_circular_buffer_item	circular_buffer_items[CIRCULAR_BUFFER_COUNT][CIRCULAR_BUFFER_ITEM_COUNT];
@@ -68,3 +67,10 @@ struct bcm54210pe_private {
 	int layer;
 	int version;
 };
+
+irqreturn_t bcm54210pe_handle_interrupt(int irq, void *phy_dat);
+irqreturn_t bcm54210pe_handle_interrupt_thread(int irq, void *phy_dat);
+
+static int bcm54210pe_pps_out_en(struct bcm54210pe_ptp *ptp, int on);
+static u16 bcm54210pe_get_base_nco6_reg(struct bcm54210pe_ptp *ptp, u16 val, bool do_nse_init);
+

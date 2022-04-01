@@ -561,24 +561,50 @@ irqreturn_t bcm54210pe_handle_interrupt(int irq, void * phy_dat)
 	return IRQ_WAKE_THREAD;
 }
 
-static int bcm54210pe_enable_pps(struct phy_device *phydev)
+static int bcm54210pe_pps_out_en(struct bcm54210pe_ptp *ptp, int on)
 {
 
 	int err;
+	struct phy_device *phydev;
+	u16 nco_6_register_value;
 
-	bcm_phy_write_exp(phydev, NSE_DPPL_NCO_6_REG,0xD002); // Working
+	phydev = ptp->chosen->phydev;
 
-	// Set sync out divider
-	bcm_phy_write_exp(phydev, NSE_DPPL_NCO_3_0_REG, 0x5940);
-	bcm_phy_write_exp(phydev, NSE_DPPL_NCO_3_1_REG, 0xC773);
-	bcm_phy_write_exp(phydev, NSE_DPPL_NCO_3_2_REG, 0x003F);
+	if (on) {
+
+		// Set enable pps
+		ptp->chosen->pps_out_en = true;
+
+		// Get base value
+		nco_6_register_value = bcm54210pe_get_base_nco6_reg(ptp, nco_6_register_value, true);
+
+		// Write to register
+		err = bcm_phy_write_exp(phydev, NSE_DPPL_NCO_6_REG, nco_6_register_value);
+
+		// Set sync out divider
+		err |= bcm_phy_write_exp(phydev, NSE_DPPL_NCO_3_0_REG, 0x5940);
+		err |= bcm_phy_write_exp(phydev, NSE_DPPL_NCO_3_1_REG, 0xC773);
+		err |= bcm_phy_write_exp(phydev, NSE_DPPL_NCO_3_2_REG, 0x003F);
 
 
-	// On next framesync load sync out divider from
-	bcm_phy_write_exp(phydev, SHADOW_REG_LOAD, 0x0200);
+		// On next framesync load sync out divider from
+		err |= bcm_phy_write_exp(phydev, SHADOW_REG_LOAD, 0x0200);
 
-	// Trigger framesync
-	err = bcm_phy_modify_exp(phydev, NSE_DPPL_NCO_6_REG, 0x003C, 0x0020);
+		// Trigger framesync
+		err |= bcm_phy_modify_exp(phydev, NSE_DPPL_NCO_6_REG, 0x003C, 0x0020);
+
+	} else {
+
+
+		// Set disable pps
+		ptp->chosen->pps_out_en = false;
+
+		// Get base value
+		nco_6_register_value = bcm54210pe_get_base_nco6_reg(ptp, nco_6_register_value, true);
+
+		// Write to register
+		err = bcm_phy_write_exp(phydev, NSE_DPPL_NCO_6_REG, nco_6_register_value); // Working
+	}
 
 	return err;
 }
@@ -617,10 +643,8 @@ static int bcm54210pe_config_1588(struct phy_device *phydev)
 	//1n ts resolution
 	err = bcm_phy_write_exp(phydev, DPLL_SELECT_REG, 0x0160);
 
-	err =  bcm_phy_write_exp(phydev, NSE_DPPL_NCO_6_REG, 0xF020); //NCO Register 6 => Enable SYNC_OUT pulse train and Internal Syncout ad framesync
-
-
-	bcm54210pe_enable_pps(phydev);
+	// Trigger immediate framesync and capture timestamp
+	err =  bcm_phy_write_exp(phydev, NSE_DPPL_NCO_6_REG, 0xF020);
 
 	//15, 33 or 41 - experimental
 	printk("DEBUG: GPIO %d IRQ %d\n", 15, gpio_to_irq(41));
@@ -642,13 +666,23 @@ static int bcm54210pe_gettime(struct ptp_clock_info *info, struct timespec64 *ts
 	
 	struct bcm54210pe_ptp *ptp = container_of(info, struct bcm54210pe_ptp, caps);
 	struct phy_device *phydev = ptp->chosen->phydev;
+	u16 nco_6_register_value;
+
+	// Set to do timestamp capture on next framesync
+	nco_6_register_value = 0x2000;
+
+	// Amend to base register
+	nco_6_register_value = bcm54210pe_get_base_nco6_reg(ptp, nco_6_register_value, true);
 
         // EXP approach
 	// Trigger sync which will capture the heartbeat counter
-	//bcm_phy_write_exp(phydev, NSE_DPPL_NCO_6_REG, 0xF000);
-	bcm_phy_write_exp(phydev, NSE_DPPL_NCO_6_REG, 0xF000);
+	//bcm_phy_write_exp(phydev, NSE_DPPL_NCO_6_REG, 0xF000); // Original
+
+	// Set the NCO register
+	bcm_phy_write_exp(phydev, NSE_DPPL_NCO_6_REG, nco_6_register_value);
+
+	// Trigger framesync
 	bcm_phy_modify_exp(phydev, NSE_DPPL_NCO_6_REG, 0x003C, 0x0020);
-	//bcm_phy_write_exp(phydev, NSE_DPPL_NCO_6_REG, 0xF020);
 
 	// Set Heart beat time read start
 	bcm_phy_write_exp(phydev, CTR_DBG_REG, 0x400);
@@ -779,7 +813,7 @@ static int bcm54210pe_adjtime(struct ptp_clock_info *info, s64 delta)
 	u64 now;
 
 	struct bcm54210pe_ptp *ptp = container_of(info, struct bcm54210pe_ptp, caps);
-	struct phy_device *phydev = ptp->chosen->phydev;
+	//struct phy_device *phydev = ptp->chosen->phydev;
 
 	mutex_lock(&ptp->timeset_lock);
 
@@ -912,19 +946,50 @@ int bcm54210pe_hwtstamp(struct mii_timestamper *mii_ts, struct ifreq *ifr)
 	return copy_to_user(ifr->ifr_data, &cfg, sizeof(cfg)) ? -EFAULT : 0;
 }
 
+static int bcm54210pe_feature_enable(struct ptp_clock_info *info, struct ptp_clock_request *rq, int on)
+{
+	struct bcm54210pe_ptp *ptp = container_of(info, struct bcm54210pe_ptp, caps);
+	switch (rq->type) {
+
+	case PTP_CLK_REQ_PPS:
+		bcm54210pe_pps_out_en(ptp, on);
+		return 0;
+	}
+
+	return -EOPNOTSUPP;
+}
+
+
+static int bcm54210pe_ptp_verify_pin(struct ptp_clock_info *info, unsigned int pin,
+			      enum ptp_pin_function func, unsigned int chan)
+{
+	switch (func) {
+	case PTP_PF_NONE:
+	case PTP_PF_EXTTS:
+	case PTP_PF_PEROUT:
+		break;
+	case PTP_PF_PHYSYNC:
+		return -1;
+	}
+	return 0;
+}
+
 static const struct ptp_clock_info bcm54210pe_clk_caps = {
         .owner          = THIS_MODULE,
         .name           = "BCM54210PE_PHC",
         .max_adj        = 100000000,
         .n_alarm        = 0,
-        .n_pins         = 0,
-        .n_ext_ts       = 0,
-        .n_per_out      = 0,
-        .pps            = 0,
+        .n_pins         = 2,
+        .n_ext_ts       = 1,
+        .n_per_out      = 1,
+        .pps            = 1,
+	//.pin_config	= &
         .adjtime        = &bcm54210pe_adjtime,
         .adjfine        = &bcm54210pe_adjfine,
         .gettime64      = &bcm54210pe_gettime,
         .settime64      = &bcm54210pe_settime,
+	.enable		= &bcm54210pe_feature_enable,
+	.verify		= &bcm54210pe_ptp_verify_pin,
 };
 
 
@@ -968,7 +1033,7 @@ int bcm54210pe_probe(struct phy_device *phydev)
                 goto error;
 	}
 
-    bcm54210pe->phydev = phydev;
+	bcm54210pe->phydev = phydev;
 
 	bcm54210pe->ptp = ptp;
 
@@ -993,12 +1058,33 @@ int bcm54210pe_probe(struct phy_device *phydev)
 		for (y = 0; y < CIRCULAR_BUFFER_ITEM_COUNT; y++)
 		{ list_add(&bcm54210pe->circular_buffer_items[x][y].list, &bcm54210pe->circular_buffers[x]); }
 	}
-	
+
+	// Caps
 	memcpy(&bcm54210pe->ptp->caps, &bcm54210pe_clk_caps, sizeof(bcm54210pe_clk_caps));
+	bcm54210pe->ptp->caps.pin_config = &bcm54210pe->sdp_config;
+
+	// Mutex
 	mutex_init(&bcm54210pe->ptp->clock_lock);
 	mutex_init(&bcm54210pe->ptp->timeset_lock);
+
+	// Features
+	bcm54210pe->one_step = false;
+	bcm54210pe->pps_in_en = false;
+	bcm54210pe->pps_out_en = false;
+
+	// Pin descriptions
+	struct ptp_pin_desc *sync_in_pin_desc = &bcm54210pe->sdp_config[0];
+	snprintf(sync_in_pin_desc->name, sizeof(sync_in_pin_desc->name), "SYNC_IN");
+	sync_in_pin_desc->index = 0;
+	sync_in_pin_desc->func = PTP_PF_NONE;
+
+	struct ptp_pin_desc *sync_out_pin_desc = &bcm54210pe->sdp_config[1];
+	snprintf(sync_out_pin_desc->name, sizeof(sync_out_pin_desc->name), "SYNC_OUT");
+	sync_in_pin_desc->index = 1;
+	sync_in_pin_desc->func = PTP_PF_NONE;
+
 	ptp->chosen = bcm54210pe;
-    phydev->priv = bcm54210pe;
+	phydev->priv = bcm54210pe;
 	ptp->caps.owner = THIS_MODULE;
 
 	bcm54210pe->ptp->ptp_clock = ptp_clock_register(&bcm54210pe->ptp->caps, &phydev->mdio.dev);
@@ -1013,4 +1099,22 @@ int bcm54210pe_probe(struct phy_device *phydev)
 
 error:
 	return err;
+}
+
+static u16 bcm54210pe_get_base_nco6_reg(struct bcm54210pe_ptp *ptp, u16 val, bool do_nse_init) {
+
+	// Set Global mode to CPU system
+	val |= 0xC000;
+
+	// NSE init
+	if (do_nse_init) {
+		val |= 0x1000;
+	}
+
+	// PPS out
+	if (ptp->chosen->pps_out_en) {
+		val |= 0x0002;
+	}
+
+	return val;
 }
