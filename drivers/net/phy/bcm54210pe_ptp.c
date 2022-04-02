@@ -814,7 +814,9 @@ static int bcm54210pe_adjfine(struct ptp_clock_info *info, long scaled_ppm)
 
 	// This is not completely accurate but very fast
 	//scaled_ppm >>= 7;
-	scaled_ppm *=2147  //2^31 divided by millin (ppm)	
+	//scaled_ppm *=2147  //2^31 divided by millin (ppm)	
+	//or use the faster bitwise operation approx
+	scale_ppm <<= 11;
 	
 	base_8ns_interval = 1 << 31;
 
