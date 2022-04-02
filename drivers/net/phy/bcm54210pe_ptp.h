@@ -79,4 +79,6 @@ irqreturn_t bcm54210pe_handle_interrupt_thread(int irq, void *phy_dat);
 static int bcm54210pe_per_out_en(struct bcm54210pe_ptp *ptp, int freq, int on);
 static u16 bcm54210pe_get_base_nco6_reg(struct bcm54210pe_ptp *ptp, u16 val, bool do_nse_init);
 static int bcm54210pe_enable_interrupts(struct phy_device *phydev, bool fsync_en, bool sop_en);
+static int bcm54210pe_gettimex(struct ptp_clock_info *info, struct timespec64 *ts, struct ptp_system_timestamp *sts);
+
 

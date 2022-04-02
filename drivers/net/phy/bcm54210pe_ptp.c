@@ -728,6 +728,19 @@ static int bcm54210pe_gettime(struct ptp_clock_info *info, struct timespec64 *ts
 	return 0;
 }
 
+static int bcm54210pe_gettimex(struct ptp_clock_info *info,
+			       struct timespec64 *ts,
+			       struct ptp_system_timestamp *sts)
+{
+	//TODO: Add spinlocks #BurnBabyBurn
+	int err;
+	ptp_read_system_prets(sts);
+	err = bcm54210pe_gettime(info, ts);
+	ptp_read_system_postts(sts);
+	return err;
+}
+
+
 static int bcm54210pe_settime(struct ptp_clock_info *info, const struct timespec64 *ts)
 {
 	uint64_t time_stamp = (ts->tv_sec * 1000000000) + ts->tv_nsec;
@@ -1048,6 +1061,7 @@ static const struct ptp_clock_info bcm54210pe_clk_caps = {
         .adjtime        = &bcm54210pe_adjtime,
         .adjfine        = &bcm54210pe_adjfine,
         .gettime64      = &bcm54210pe_gettime,
+	.gettimex64	= &bcm54210pe_gettimex,
         .settime64      = &bcm54210pe_settime,
 	.enable		= &bcm54210pe_feature_enable,
 	.verify		= &bcm54210pe_ptp_verify_pin,
@@ -1085,14 +1099,6 @@ static int bcm54210pe_sw_reset(struct phy_device *phydev)
 	aux = bcm_phy_read_exp(phydev, EXT_SOFTWARE_RESET);
         return err;
 }
-
-static int bcm54210pe_enable_interrupt(struct phy_device *phydev)
-{
-
-}
-
-
-
 
 int bcm54210pe_probe(struct phy_device *phydev)
 {	
