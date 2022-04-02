@@ -561,19 +561,42 @@ irqreturn_t bcm54210pe_handle_interrupt(int irq, void * phy_dat)
 	return IRQ_WAKE_THREAD;
 }
 
-static int bcm54210pe_pps_out_en(struct bcm54210pe_ptp *ptp, int on)
+static int bcm54210pe_per_out_en(struct bcm54210pe_ptp *ptp, int freq, int on)
 {
-
 	int err;
 	struct phy_device *phydev;
-	u16 nco_6_register_value;
+	u16 nco_6_register_value, frequency_hi, frequency_lo, pulse_width;
 
 	phydev = ptp->chosen->phydev;
 
 	if (on) {
 
-		// Set enable pps
-		ptp->chosen->pps_out_en = true;
+		frequency_hi = 0;
+		frequency_lo = 0;
+
+		// Convert interval pulse spacing to 8 ns units
+		freq /= 8;
+
+		if (freq < 2500) {
+
+			// At a frequency at less than 20us (2500 x 8ns) set pulse length to 1/10th of the interval pulse spacing
+			pulse_width = freq / 10;
+
+			// Where the interval pulse spacing is short, ensure we set a pulse length of 8ns
+			if (pulse_width == 0)
+				pulse_width = 1;
+
+		} else {
+			// Otherwise set pulse with to 4us (8ns x 500 = 4us)
+			pulse_width  = 500;
+		}
+
+		frequency_lo = (u16)freq; // Lowest 16 bits of 8ns interval pulse spacing [15:0]
+		frequency_hi = 0x3F & (u16)freq >> 16; // Highest 14 bits of 8ns interval pulse spacing [29:16]
+		frequency_hi |= pulse_width << 14; // 2 lowest bits of 8ns pulse length [1:0]
+
+		// Set enable per_out
+		ptp->chosen->per_out_en = true;
 
 		// Get base value
 		nco_6_register_value = bcm54210pe_get_base_nco6_reg(ptp, nco_6_register_value, true);
@@ -581,29 +604,29 @@ static int bcm54210pe_pps_out_en(struct bcm54210pe_ptp *ptp, int on)
 		// Write to register
 		err = bcm_phy_write_exp(phydev, NSE_DPPL_NCO_6_REG, nco_6_register_value);
 
-		// Set sync out divider
-		err |= bcm_phy_write_exp(phydev, NSE_DPPL_NCO_3_0_REG, 0x5940);
-		err |= bcm_phy_write_exp(phydev, NSE_DPPL_NCO_3_1_REG, 0xC773);
-		err |= bcm_phy_write_exp(phydev, NSE_DPPL_NCO_3_2_REG, 0x003F);
+		// Set sync out pulse interval spacing and pulse length
+		err |= bcm_phy_write_exp(phydev, NSE_DPPL_NCO_3_0_REG, frequency_lo);
+		err |= bcm_phy_write_exp(phydev, NSE_DPPL_NCO_3_1_REG, frequency_hi);
+		err |= bcm_phy_write_exp(phydev, NSE_DPPL_NCO_3_2_REG, 0x7F & pulse_width >> 2); // 7 highest bit  of 8 ns pulse length [8:2]
 
-
-		// On next framesync load sync out divider from
+		// On next framesync load sync out frequency
 		err |= bcm_phy_write_exp(phydev, SHADOW_REG_LOAD, 0x0200);
 
-		// Trigger framesync
+		// Trigger immediate framesync framesync
 		err |= bcm_phy_modify_exp(phydev, NSE_DPPL_NCO_6_REG, 0x003C, 0x0020);
 
 	} else {
 
 
 		// Set disable pps
-		ptp->chosen->pps_out_en = false;
+		ptp->chosen->per_out_en = false;
 
 		// Get base value
 		nco_6_register_value = bcm54210pe_get_base_nco6_reg(ptp, nco_6_register_value, true);
 
 		// Write to register
 		err = bcm_phy_write_exp(phydev, NSE_DPPL_NCO_6_REG, nco_6_register_value); // Working
+
 	}
 
 	return err;
@@ -674,11 +697,7 @@ static int bcm54210pe_gettime(struct ptp_clock_info *info, struct timespec64 *ts
 	// Amend to base register
 	nco_6_register_value = bcm54210pe_get_base_nco6_reg(ptp, nco_6_register_value, true);
 
-        // EXP approach
-	// Trigger sync which will capture the heartbeat counter
-	//bcm_phy_write_exp(phydev, NSE_DPPL_NCO_6_REG, 0xF000); // Original
-
-	// Set the NCO register
+        // Set the NCO register
 	bcm_phy_write_exp(phydev, NSE_DPPL_NCO_6_REG, nco_6_register_value);
 
 	// Trigger framesync
@@ -719,7 +738,7 @@ static int bcm54210pe_settime(struct ptp_clock_info *info, const struct timespec
 	struct bcm54210pe_ptp *ptp = container_of(info, struct bcm54210pe_ptp, caps);
 	struct phy_device *phydev = ptp->chosen->phydev;
 
-	var[4] = (int) (ts->tv_sec  & 0x0000FFFF00000000) >> 32;
+	var[4] = (int) ((ts->tv_sec & 0x0000FFFF00000000) >> 32);
 	var[3] = (int) (ts->tv_sec  & 0x00000000FFFF0000) >> 16;
 	var[2] = (int) (ts->tv_sec  & 0x000000000000FFFF);
 	var[1] = (int) (ts->tv_nsec & 0x00000000FFFF0000) >> 16;
@@ -949,11 +968,44 @@ int bcm54210pe_hwtstamp(struct mii_timestamper *mii_ts, struct ifreq *ifr)
 static int bcm54210pe_feature_enable(struct ptp_clock_info *info, struct ptp_clock_request *rq, int on)
 {
 	struct bcm54210pe_ptp *ptp = container_of(info, struct bcm54210pe_ptp, caps);
+	s64 ns;
+	struct timespec64 ts;
+
 	switch (rq->type) {
 
-	case PTP_CLK_REQ_PPS:
-		bcm54210pe_pps_out_en(ptp, on);
-		return 0;
+	case PTP_CLK_REQ_PEROUT :
+
+		/* Reject requests with unsupported flags */
+		if (rq->perout.flags || rq->perout.index != SYNC_OUT_PIN)
+			return -EOPNOTSUPP;
+
+		if (on) {
+
+			// Extract pulse spacing interval
+			ts.tv_sec = rq->perout.period.sec;
+			ts.tv_nsec = rq->perout.period.nsec;
+			ns = timespec64_to_ns(&ts);
+
+			// 16ns is minimum pulse spacing interval (a value of 16 will result in 8ns high followed by 8 ns low)
+			if (ns < 16) {
+				return -EINVAL;
+			}
+
+			// Enable per_out
+		}
+		return bcm54210pe_per_out_en(ptp, ns, on);
+
+	case PTP_CLK_REQ_EXTTS:
+		if (rq->perout.flags || rq->perout.index != SYNC_IN_PIN)
+			return -EOPNOTSUPP;
+
+
+	// Not the right thing #Ooops
+	case PTP_CLK_REQ_PPS :
+		// This is what we call kpps in Timebeat - will get back to later
+
+	default:
+		break;
 	}
 
 	return -EOPNOTSUPP;
@@ -965,13 +1017,20 @@ static int bcm54210pe_ptp_verify_pin(struct ptp_clock_info *info, unsigned int p
 {
 	switch (func) {
 	case PTP_PF_NONE:
+		return 0;
+		break;
 	case PTP_PF_EXTTS:
+		if (pin == SYNC_IN_PIN)
+			return 0;
+		break;
 	case PTP_PF_PEROUT:
+		if (pin == SYNC_OUT_PIN)
+			return 0;
 		break;
 	case PTP_PF_PHYSYNC:
-		return -1;
+		break;
 	}
-	return 0;
+	return -1;
 }
 
 static const struct ptp_clock_info bcm54210pe_clk_caps = {
@@ -982,8 +1041,7 @@ static const struct ptp_clock_info bcm54210pe_clk_caps = {
         .n_pins         = 2,
         .n_ext_ts       = 1,
         .n_per_out      = 1,
-        .pps            = 1,
-	//.pin_config	= &
+        .pps            = 0,
         .adjtime        = &bcm54210pe_adjtime,
         .adjfine        = &bcm54210pe_adjfine,
         .gettime64      = &bcm54210pe_gettime,
@@ -1068,20 +1126,21 @@ int bcm54210pe_probe(struct phy_device *phydev)
 	mutex_init(&bcm54210pe->ptp->timeset_lock);
 
 	// Features
+	bcm54210pe->ts_capture = true;
 	bcm54210pe->one_step = false;
-	bcm54210pe->pps_in_en = false;
-	bcm54210pe->pps_out_en = false;
+	bcm54210pe->extts_en = false;
+	bcm54210pe->per_out_en = false;
 
 	// Pin descriptions
-	struct ptp_pin_desc *sync_in_pin_desc = &bcm54210pe->sdp_config[0];
-	snprintf(sync_in_pin_desc->name, sizeof(sync_in_pin_desc->name), "SYNC_IN");
-	sync_in_pin_desc->index = 0;
+	struct ptp_pin_desc *sync_in_pin_desc = &bcm54210pe->sdp_config[SYNC_IN_PIN];
+	snprintf(sync_in_pin_desc->name, sizeof(sync_in_pin_desc->name), "SYNC_IN-%d", SYNC_IN_PIN);
+	sync_in_pin_desc->index = SYNC_IN_PIN;
 	sync_in_pin_desc->func = PTP_PF_NONE;
 
-	struct ptp_pin_desc *sync_out_pin_desc = &bcm54210pe->sdp_config[1];
-	snprintf(sync_out_pin_desc->name, sizeof(sync_out_pin_desc->name), "SYNC_OUT");
-	sync_in_pin_desc->index = 1;
-	sync_in_pin_desc->func = PTP_PF_NONE;
+	struct ptp_pin_desc *sync_out_pin_desc = &bcm54210pe->sdp_config[SYNC_OUT_PIN];
+	snprintf(sync_out_pin_desc->name, sizeof(sync_out_pin_desc->name), "SYNC_OUT-%d", SYNC_OUT_PIN);
+	sync_out_pin_desc->index = SYNC_OUT_PIN;
+	sync_out_pin_desc->func = PTP_PF_NONE;
 
 	ptp->chosen = bcm54210pe;
 	phydev->priv = bcm54210pe;
@@ -1111,8 +1170,13 @@ static u16 bcm54210pe_get_base_nco6_reg(struct bcm54210pe_ptp *ptp, u16 val, boo
 		val |= 0x1000;
 	}
 
+	// NSE init
+	if (ptp->chosen->ts_capture) {
+		val |= 0x2000;
+	}
+
 	// PPS out
-	if (ptp->chosen->pps_out_en) {
+	if (ptp->chosen->per_out_en) {
 		val |= 0x0002;
 	}
 

@@ -16,6 +16,10 @@
 #define CIRCULAR_BUFFER_COUNT		8
 #define CIRCULAR_BUFFER_ITEM_COUNT	32
 
+#define SYNC_IN_PIN  0
+#define SYNC_OUT_PIN 1
+
+
 struct bcm54210pe_ptp {
 	struct ptp_clock_info caps;
 	struct ptp_clock *ptp_clock;
@@ -49,10 +53,11 @@ struct bcm54210pe_private {
 
 	int ts_tx_config;
 	int tx_rx_filter;
-	
+
+	bool ts_capture;
 	bool one_step;
-	bool pps_out_en;
-	bool pps_in_en;
+	bool per_out_en;
+	bool extts_en;
 
 	struct sk_buff_head tx_skb_queue;
 		
@@ -71,6 +76,6 @@ struct bcm54210pe_private {
 irqreturn_t bcm54210pe_handle_interrupt(int irq, void *phy_dat);
 irqreturn_t bcm54210pe_handle_interrupt_thread(int irq, void *phy_dat);
 
-static int bcm54210pe_pps_out_en(struct bcm54210pe_ptp *ptp, int on);
+static int bcm54210pe_per_out_en(struct bcm54210pe_ptp *ptp, int freq, int on);
 static u16 bcm54210pe_get_base_nco6_reg(struct bcm54210pe_ptp *ptp, u16 val, bool do_nse_init);
 
