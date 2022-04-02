@@ -702,8 +702,8 @@ static int bcm54210pe_gettime(struct ptp_clock_info *info, struct timespec64 *ts
 
 	// Trigger framesync
 	bcm_phy_modify_exp(phydev, NSE_DPPL_NCO_6_REG, 0x003C, 0x0020);
-	//bcm_phy_modify_exp(phydev, NSE_DPPL_NCO_6_REG, 0x203C, 0x2020);
 
+	//bcm_phy_modify_exp(phydev, NSE_DPPL_NCO_6_REG, 0x203C, 0x2020);
 	//udelay(50);
 
 	// Set Heart beat time read start
@@ -761,9 +761,9 @@ static int bcm54210pe_settime(struct ptp_clock_info *info, const struct timespec
 	struct phy_device *phydev = ptp->chosen->phydev;
 
 	var[4] = (int) ((ts->tv_sec & 0x0000FFFF00000000) >> 32);
-	var[3] = (int) (ts->tv_sec  & 0x00000000FFFF0000) >> 16;
+	var[3] = (int) ((ts->tv_sec  & 0x00000000FFFF0000) >> 16);
 	var[2] = (int) (ts->tv_sec  & 0x000000000000FFFF);
-	var[1] = (int) (ts->tv_nsec & 0x00000000FFFF0000) >> 16;
+	var[1] = (int) ((ts->tv_nsec & 0x00000000FFFF0000) >> 16);
 	var[0] = (int) (ts->tv_nsec & 0x000000000000FFFF); 
 
 	phy_lock_mdio_bus(phydev);
@@ -1114,8 +1114,9 @@ int bcm54210pe_probe(struct phy_device *phydev)
 	int x, y;
 	struct bcm54210pe_ptp *ptp;
         struct bcm54210pe_private *bcm54210pe;
+	struct ptp_pin_desc *sync_in_pin_desc, *sync_out_pin_desc;
 
-	bcm54210pe_sw_reset(phydev);
+		bcm54210pe_sw_reset(phydev);
 	bcm54210pe_config_1588(phydev);
 	bcm54210pe = kzalloc(sizeof(struct bcm54210pe_private), GFP_KERNEL);
         if (!bcm54210pe) {
@@ -1173,12 +1174,12 @@ int bcm54210pe_probe(struct phy_device *phydev)
 	bcm54210pe->per_out_en = false;
 
 	// Pin descriptions
-	struct ptp_pin_desc *sync_in_pin_desc = &bcm54210pe->sdp_config[SYNC_IN_PIN];
+	sync_in_pin_desc = &bcm54210pe->sdp_config[SYNC_IN_PIN];
 	snprintf(sync_in_pin_desc->name, sizeof(sync_in_pin_desc->name), "SYNC_IN");
 	sync_in_pin_desc->index = SYNC_IN_PIN;
 	sync_in_pin_desc->func = PTP_PF_NONE;
 
-	struct ptp_pin_desc *sync_out_pin_desc = &bcm54210pe->sdp_config[SYNC_OUT_PIN];
+	sync_out_pin_desc = &bcm54210pe->sdp_config[SYNC_OUT_PIN];
 	snprintf(sync_out_pin_desc->name, sizeof(sync_out_pin_desc->name), "SYNC_OUT");
 	sync_out_pin_desc->index = SYNC_OUT_PIN;
 	sync_out_pin_desc->func = PTP_PF_NONE;
