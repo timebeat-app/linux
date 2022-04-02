@@ -569,8 +569,8 @@ static int bcm54210pe_per_out_en(struct bcm54210pe_ptp *ptp, int freq, int on)
 
 	phydev = ptp->chosen->phydev;
 
-	if (on) {
-
+	//if (on) {
+	if (true) {
 		frequency_hi = 0;
 		frequency_lo = 0;
 
@@ -607,7 +607,7 @@ static int bcm54210pe_per_out_en(struct bcm54210pe_ptp *ptp, int freq, int on)
 		// Set sync out pulse interval spacing and pulse length
 		err |= bcm_phy_write_exp(phydev, NSE_DPPL_NCO_3_0_REG, frequency_lo);
 		err |= bcm_phy_write_exp(phydev, NSE_DPPL_NCO_3_1_REG, frequency_hi);
-		err |= bcm_phy_write_exp(phydev, NSE_DPPL_NCO_3_2_REG, 0x7F & pulse_width >> 2); // 7 highest bit  of 8 ns pulse length [8:2]
+		err |= bcm_phy_write_exp(phydev, NSE_DPPL_NCO_3_2_REG, (0x7F & pulse_width) >> 2); // 7 highest bit  of 8 ns pulse length [8:2]
 
 		// On next framesync load sync out frequency
 		err |= bcm_phy_write_exp(phydev, SHADOW_REG_LOAD, 0x0200);
@@ -629,6 +629,7 @@ static int bcm54210pe_per_out_en(struct bcm54210pe_ptp *ptp, int freq, int on)
 
 	}
 
+	printk("Per out return value: %d\n", err);
 	return err;
 }
 
@@ -989,6 +990,7 @@ int bcm54210pe_hwtstamp(struct mii_timestamper *mii_ts, struct ifreq *ifr)
 
 static int bcm54210pe_feature_enable(struct ptp_clock_info *info, struct ptp_clock_request *rq, int on)
 {
+	printk("-- bcm54210pe_feature_enable called --\n");
 	struct bcm54210pe_ptp *ptp = container_of(info, struct bcm54210pe_ptp, caps);
 	s64 ns;
 	struct timespec64 ts;
@@ -998,23 +1000,26 @@ static int bcm54210pe_feature_enable(struct ptp_clock_info *info, struct ptp_clo
 	case PTP_CLK_REQ_PEROUT :
 
 		/* Reject requests with unsupported flags */
-		if (rq->perout.flags || rq->perout.index != SYNC_OUT_PIN)
-			return -EOPNOTSUPP;
+		//if (rq->perout.flags || rq->perout.index != SYNC_OUT_PIN)
+		//if (rq->perout.index != SYNC_OUT_PIN)
+		//		return -EOPNOTSUPP;
 
 		if (on) {
-
-			// Extract pulse spacing interval
-			ts.tv_sec = rq->perout.period.sec;
-			ts.tv_nsec = rq->perout.period.nsec;
-			ns = timespec64_to_ns(&ts);
-
-			// 16ns is minimum pulse spacing interval (a value of 16 will result in 8ns high followed by 8 ns low)
-			if (ns < 16) {
-				return -EINVAL;
-			}
-
 			// Enable per_out
 		}
+		// Extract pulse spacing interval
+		ts.tv_sec = rq->perout.period.sec;
+		ts.tv_nsec = rq->perout.period.nsec;
+		ns = timespec64_to_ns(&ts);
+
+		printk("perout ns: %d \n", ns);
+		printk("perout index: %d \n", rq->perout.index);
+		// 16ns is minimum pulse spacing interval (a value of 16 will result in 8ns high followed by 8 ns low)
+		if (ns < 16) {
+			return -EINVAL;
+		}
+
+
 		return bcm54210pe_per_out_en(ptp, ns, on);
 
 	case PTP_CLK_REQ_EXTTS:
@@ -1067,7 +1072,7 @@ static const struct ptp_clock_info bcm54210pe_clk_caps = {
         .adjtime        = &bcm54210pe_adjtime,
         .adjfine        = &bcm54210pe_adjfine,
         .gettime64      = &bcm54210pe_gettime,
-	.gettimex64	= &bcm54210pe_gettimex,
+	//.gettimex64	= &bcm54210pe_gettimex,
         .settime64      = &bcm54210pe_settime,
 	.enable		= &bcm54210pe_feature_enable,
 	.verify		= &bcm54210pe_ptp_verify_pin,
