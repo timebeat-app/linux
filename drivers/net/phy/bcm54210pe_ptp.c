@@ -63,11 +63,11 @@
 #define TIME_STAMP_REG_3		0x08C4
 #define TIME_STAMP_INFO_1		0x088C
 #define TIME_STAMP_INFO_2		0x088D
-#define INTERRUPT_STATUS_REG	0x085F
+#define INTERRUPT_STATUS_REG		0x085F
 #define INTERRUPT_MASK_REG		0x085E
 #define EXT_SOFTWARE_RESET		0x0F70
-#define EXT_RESET1				0x0001 //RESET
-#define EXT_RESET2				0x0000 //NORMAL OPERATION
+#define EXT_RESET1			0x0001 //RESET
+#define EXT_RESET2			0x0000 //NORMAL OPERATION
 #define GLOBAL_TIMESYNC_REG		0x0FF5
 
 #define TX_EVENT_MODE_REG		0x0811
@@ -702,6 +702,9 @@ static int bcm54210pe_gettime(struct ptp_clock_info *info, struct timespec64 *ts
 
 	// Trigger framesync
 	bcm_phy_modify_exp(phydev, NSE_DPPL_NCO_6_REG, 0x003C, 0x0020);
+	//bcm_phy_modify_exp(phydev, NSE_DPPL_NCO_6_REG, 0x203C, 0x2020);
+
+	//udelay(50);
 
 	// Set Heart beat time read start
 	bcm_phy_write_exp(phydev, CTR_DBG_REG, 0x400);
@@ -1050,6 +1053,22 @@ static const struct ptp_clock_info bcm54210pe_clk_caps = {
 	.verify		= &bcm54210pe_ptp_verify_pin,
 };
 
+static int bcm54210pe_enable_interrupts(struct phy_device *phydev, bool fsync_en, bool sop_en)
+{
+	u16 interrupt_mask;
+
+	interrupt_mask = 0;
+
+	if (fsync_en) {
+		interrupt_mask |= 0x0001;
+	}
+
+	if (sop_en) {
+		interrupt_mask |= 0x0002;
+	}
+
+	return bcm_phy_write_exp(phydev, INTERRUPT_MASK_REG, interrupt_mask);
+}
 
 static int bcm54210pe_sw_reset(struct phy_device *phydev)
 {
@@ -1066,6 +1085,13 @@ static int bcm54210pe_sw_reset(struct phy_device *phydev)
 	aux = bcm_phy_read_exp(phydev, EXT_SOFTWARE_RESET);
         return err;
 }
+
+static int bcm54210pe_enable_interrupt(struct phy_device *phydev)
+{
+
+}
+
+
 
 
 int bcm54210pe_probe(struct phy_device *phydev)
@@ -1133,12 +1159,12 @@ int bcm54210pe_probe(struct phy_device *phydev)
 
 	// Pin descriptions
 	struct ptp_pin_desc *sync_in_pin_desc = &bcm54210pe->sdp_config[SYNC_IN_PIN];
-	snprintf(sync_in_pin_desc->name, sizeof(sync_in_pin_desc->name), "SYNC_IN-%d", SYNC_IN_PIN);
+	snprintf(sync_in_pin_desc->name, sizeof(sync_in_pin_desc->name), "SYNC_IN");
 	sync_in_pin_desc->index = SYNC_IN_PIN;
 	sync_in_pin_desc->func = PTP_PF_NONE;
 
 	struct ptp_pin_desc *sync_out_pin_desc = &bcm54210pe->sdp_config[SYNC_OUT_PIN];
-	snprintf(sync_out_pin_desc->name, sizeof(sync_out_pin_desc->name), "SYNC_OUT-%d", SYNC_OUT_PIN);
+	snprintf(sync_out_pin_desc->name, sizeof(sync_out_pin_desc->name), "SYNC_OUT");
 	sync_out_pin_desc->index = SYNC_OUT_PIN;
 	sync_out_pin_desc->func = PTP_PF_NONE;
 
