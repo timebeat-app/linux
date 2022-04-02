@@ -732,11 +732,17 @@ static int bcm54210pe_gettimex(struct ptp_clock_info *info,
 			       struct timespec64 *ts,
 			       struct ptp_system_timestamp *sts)
 {
-	//TODO: Add spinlocks #BurnBabyBurn
 	int err;
+	unsigned long flags;
+
+	struct bcm54210pe_ptp *ptp = container_of(info, struct bcm54210pe_ptp, caps);
+
+
+	spin_lock_irqsave(&ptp->chosen->irq_spinlock, flags);
 	ptp_read_system_prets(sts);
 	err = bcm54210pe_gettime(info, ts);
 	ptp_read_system_postts(sts);
+	spin_unlock_irqrestore(&ptp->chosen->irq_spinlock, flags);
 	return err;
 }
 
@@ -1156,6 +1162,9 @@ int bcm54210pe_probe(struct phy_device *phydev)
 	// Mutex
 	mutex_init(&bcm54210pe->ptp->clock_lock);
 	mutex_init(&bcm54210pe->ptp->timeset_lock);
+
+	// Spinlock
+	spin_lock_init(&bcm54210pe->irq_spinlock);
 
 	// Features
 	bcm54210pe->ts_capture = true;
