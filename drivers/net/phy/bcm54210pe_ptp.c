@@ -561,7 +561,7 @@ irqreturn_t bcm54210pe_handle_interrupt(int irq, void * phy_dat)
 	return IRQ_WAKE_THREAD;
 }
 
-static int bcm54210pe_per_out_en(struct bcm54210pe_ptp *ptp, s64 period, s64 pulsewidth, int on)
+static int bcm54210pe_perout_en(struct bcm54210pe_ptp *ptp, s64 period, s64 pulsewidth, int on)
 {
 	int err;
 	struct phy_device *phydev;
@@ -599,7 +599,6 @@ static int bcm54210pe_per_out_en(struct bcm54210pe_ptp *ptp, s64 period, s64 pul
 		frequency_hi	|= (u16) pulsewidth << 14; 		// 2 lowest bits of 8ns pulse length [1:0]
 		pulsewidth_reg	 = (u16) (0x7F & (pulsewidth >> 2));	// 7 highest bit  of 8 ns pulse length [8:2]
 
-		printk("per out regs: %d:%d:%d\n",frequency_lo, frequency_hi, pulsewidth_reg );
 		// Set enable per_out
 		ptp->chosen->per_out_en = true;
 
@@ -622,7 +621,6 @@ static int bcm54210pe_per_out_en(struct bcm54210pe_ptp *ptp, s64 period, s64 pul
 
 	} else {
 
-
 		// Set disable pps
 		ptp->chosen->per_out_en = false;
 
@@ -631,10 +629,8 @@ static int bcm54210pe_per_out_en(struct bcm54210pe_ptp *ptp, s64 period, s64 pul
 
 		// Write to register
 		err = bcm_phy_write_exp(phydev, NSE_DPPL_NCO_6_REG, nco_6_register_value);
-
 	}
 
-	printk("Per out return value: %d\n", err);
 	return err;
 }
 
@@ -1000,7 +996,6 @@ int bcm54210pe_hwtstamp(struct mii_timestamper *mii_ts, struct ifreq *ifr)
 
 static int bcm54210pe_feature_enable(struct ptp_clock_info *info, struct ptp_clock_request *req, int on)
 {
-	printk("-- bcm54210pe_feature_enable called -- %d\n");
 	struct bcm54210pe_ptp *ptp = container_of(info, struct bcm54210pe_ptp, caps);
 	s64 period, pulsewidth;
 	struct timespec64 ts;
@@ -1012,7 +1007,6 @@ static int bcm54210pe_feature_enable(struct ptp_clock_info *info, struct ptp_clo
 		period = 0;
 		pulsewidth = 0;
 
-		printk("Perout flags: %d\n", req->perout.flags);
 		// Check if pin func is set correctly
 		if (ptp->chosen->sdp_config[SYNC_OUT_PIN].func != PTP_PF_PEROUT) {
 			return -EOPNOTSUPP;
@@ -1024,10 +1018,11 @@ static int bcm54210pe_feature_enable(struct ptp_clock_info *info, struct ptp_clo
 		}
 		// Check if a specific pulsewidth is set
 		if ((req->perout.flags & PTP_PEROUT_DUTY_CYCLE) > 0) {
+
+			// Extract pulsewidth
 			ts.tv_sec = req->perout.on.sec;
 			ts.tv_nsec = req->perout.on.nsec;
 			pulsewidth = timespec64_to_ns(&ts);
-			printk("Pulsewidth set to %d\n", pulsewidth);
 
 			// 9 bits in 8ns units, so max = 4,088ns
 			if (pulsewidth > 511 * 8) {
@@ -1046,7 +1041,7 @@ static int bcm54210pe_feature_enable(struct ptp_clock_info *info, struct ptp_clo
 		}
 
 
-		return bcm54210pe_per_out_en(ptp, period, pulsewidth, on);
+		return bcm54210pe_perout_en(ptp, period, pulsewidth, on);
 
 	case PTP_CLK_REQ_EXTTS:
 		if (ptp->chosen->sdp_config[SYNC_IN_PIN].func != PTP_PF_EXTTS) {
