@@ -561,40 +561,45 @@ irqreturn_t bcm54210pe_handle_interrupt(int irq, void * phy_dat)
 	return IRQ_WAKE_THREAD;
 }
 
-static int bcm54210pe_per_out_en(struct bcm54210pe_ptp *ptp, int freq, int on)
+static int bcm54210pe_per_out_en(struct bcm54210pe_ptp *ptp, s64 period, s64 pulsewidth, int on)
 {
 	int err;
 	struct phy_device *phydev;
-	u16 nco_6_register_value, frequency_hi, frequency_lo, pulse_width;
+	u16 nco_6_register_value, frequency_hi, frequency_lo, pulsewidth_reg;
 
 	phydev = ptp->chosen->phydev;
 
-	//if (on) {
-	if (true) {
+	if (on) {
 		frequency_hi = 0;
 		frequency_lo = 0;
+		pulsewidth_reg = 0;
 
-		// Convert interval pulse spacing to 8 ns units
-		freq /= 8;
+		// Convert interval pulse spacing (period) and pulsewidth to 8 ns units
+		period /= 8;
+		pulsewidth /= 8;
 
-		if (freq < 2500) {
+		// IF pulsewidth is not explicitly set with PTP_PEROUT_DUTY_CYCLE
+		if (pulsewidth == 0) {
+			if (period < 2500) {
+				// At a frequency at less than 20us (2500 x 8ns) set pulse length to 1/10th of the interval pulse spacing
+				pulsewidth = period / 10;
 
-			// At a frequency at less than 20us (2500 x 8ns) set pulse length to 1/10th of the interval pulse spacing
-			pulse_width = freq / 10;
+				// Where the interval pulse spacing is short, ensure we set a pulse length of 8ns
+				if (pulsewidth == 0)
+					pulsewidth = 1;
 
-			// Where the interval pulse spacing is short, ensure we set a pulse length of 8ns
-			if (pulse_width == 0)
-				pulse_width = 1;
-
-		} else {
-			// Otherwise set pulse with to 4us (8ns x 500 = 4us)
-			pulse_width  = 500;
+			} else {
+				// Otherwise set pulse with to 4us (8ns x 500 = 4us)
+				pulsewidth = 500;
+			}
 		}
 
-		frequency_lo = (u16)freq; // Lowest 16 bits of 8ns interval pulse spacing [15:0]
-		frequency_hi = 0x3F & (u16)freq >> 16; // Highest 14 bits of 8ns interval pulse spacing [29:16]
-		frequency_hi |= pulse_width << 14; // 2 lowest bits of 8ns pulse length [1:0]
+		frequency_lo 	 = (u16)period; 			// Lowest 16 bits of 8ns interval pulse spacing [15:0]
+		frequency_hi	 = (u16) (0x3FFF & (period >> 16));	// Highest 14 bits of 8ns interval pulse spacing [29:16]
+		frequency_hi	|= (u16) pulsewidth << 14; 		// 2 lowest bits of 8ns pulse length [1:0]
+		pulsewidth_reg	 = (u16) (0x7F & (pulsewidth >> 2));	// 7 highest bit  of 8 ns pulse length [8:2]
 
+		printk("per out regs: %d:%d:%d\n",frequency_lo, frequency_hi, pulsewidth_reg );
 		// Set enable per_out
 		ptp->chosen->per_out_en = true;
 
@@ -607,7 +612,7 @@ static int bcm54210pe_per_out_en(struct bcm54210pe_ptp *ptp, int freq, int on)
 		// Set sync out pulse interval spacing and pulse length
 		err |= bcm_phy_write_exp(phydev, NSE_DPPL_NCO_3_0_REG, frequency_lo);
 		err |= bcm_phy_write_exp(phydev, NSE_DPPL_NCO_3_1_REG, frequency_hi);
-		err |= bcm_phy_write_exp(phydev, NSE_DPPL_NCO_3_2_REG, (0x7F & pulse_width) >> 2); // 7 highest bit  of 8 ns pulse length [8:2]
+		err |= bcm_phy_write_exp(phydev, NSE_DPPL_NCO_3_2_REG, pulsewidth_reg);
 
 		// On next framesync load sync out frequency
 		err |= bcm_phy_write_exp(phydev, SHADOW_REG_LOAD, 0x0200);
@@ -625,7 +630,7 @@ static int bcm54210pe_per_out_en(struct bcm54210pe_ptp *ptp, int freq, int on)
 		nco_6_register_value = bcm54210pe_get_base_nco6_reg(ptp, nco_6_register_value, true);
 
 		// Write to register
-		err = bcm_phy_write_exp(phydev, NSE_DPPL_NCO_6_REG, nco_6_register_value); // Working
+		err = bcm_phy_write_exp(phydev, NSE_DPPL_NCO_6_REG, nco_6_register_value);
 
 	}
 
@@ -814,10 +819,12 @@ static int bcm54210pe_adjfine(struct ptp_clock_info *info, long scaled_ppm)
 	}
 
 	// This is not completely accurate but very fast
-	//scaled_ppm >>= 7;
+	scaled_ppm >>= 7;
+
+	// FIXME: This does not look right (at least an explanation needs to accompany)
 	//scaled_ppm *=2147  //2^31 divided by millin (ppm)	
 	//or use the faster bitwise operation approx
-	scaled_ppm <<= 11;
+	//scaled_ppm <<= 11;
 	
 	base_8ns_interval = 1 << 31;
 
@@ -991,44 +998,60 @@ int bcm54210pe_hwtstamp(struct mii_timestamper *mii_ts, struct ifreq *ifr)
 	return copy_to_user(ifr->ifr_data, &cfg, sizeof(cfg)) ? -EFAULT : 0;
 }
 
-static int bcm54210pe_feature_enable(struct ptp_clock_info *info, struct ptp_clock_request *rq, int on)
+static int bcm54210pe_feature_enable(struct ptp_clock_info *info, struct ptp_clock_request *req, int on)
 {
-	printk("-- bcm54210pe_feature_enable called --\n");
+	printk("-- bcm54210pe_feature_enable called -- %d\n");
 	struct bcm54210pe_ptp *ptp = container_of(info, struct bcm54210pe_ptp, caps);
-	s64 ns;
+	s64 period, pulsewidth;
 	struct timespec64 ts;
 
-	switch (rq->type) {
+	switch (req->type) {
 
 	case PTP_CLK_REQ_PEROUT :
 
-		/* Reject requests with unsupported flags */
-		//if (rq->perout.flags || rq->perout.index != SYNC_OUT_PIN)
-		//if (rq->perout.index != SYNC_OUT_PIN)
-		//		return -EOPNOTSUPP;
+		period = 0;
+		pulsewidth = 0;
 
-		if (on) {
-			// Enable per_out
+		printk("Perout flags: %d\n", req->perout.flags);
+		// Check if pin func is set correctly
+		if (ptp->chosen->sdp_config[SYNC_OUT_PIN].func != PTP_PF_PEROUT) {
+			return -EOPNOTSUPP;
 		}
-		// Extract pulse spacing interval
-		ts.tv_sec = rq->perout.period.sec;
-		ts.tv_nsec = rq->perout.period.nsec;
-		ns = timespec64_to_ns(&ts);
 
-		printk("perout ns: %d \n", ns);
-		printk("perout index: %d \n", rq->perout.index);
+		// No other flags supported
+		if (req->perout.flags & ~PTP_PEROUT_DUTY_CYCLE) {
+			return -EOPNOTSUPP;
+		}
+		// Check if a specific pulsewidth is set
+		if ((req->perout.flags & PTP_PEROUT_DUTY_CYCLE) > 0) {
+			ts.tv_sec = req->perout.on.sec;
+			ts.tv_nsec = req->perout.on.nsec;
+			pulsewidth = timespec64_to_ns(&ts);
+			printk("Pulsewidth set to %d\n", pulsewidth);
+
+			// 9 bits in 8ns units, so max = 4,088ns
+			if (pulsewidth > 511 * 8) {
+				return -ERANGE;
+			}
+		}
+
+		// Extract pulse spacing interval (period)
+		ts.tv_sec = req->perout.period.sec;
+		ts.tv_nsec = req->perout.period.nsec;
+		period = timespec64_to_ns(&ts);
+
 		// 16ns is minimum pulse spacing interval (a value of 16 will result in 8ns high followed by 8 ns low)
-		if (ns < 16) {
-			return -EINVAL;
+		if (period != 0 && period < 16) {
+			return -ERANGE;
 		}
 
 
-		return bcm54210pe_per_out_en(ptp, ns, on);
+		return bcm54210pe_per_out_en(ptp, period, pulsewidth, on);
 
 	case PTP_CLK_REQ_EXTTS:
-		if (rq->perout.flags || rq->perout.index != SYNC_IN_PIN)
+		if (ptp->chosen->sdp_config[SYNC_IN_PIN].func != PTP_PF_EXTTS) {
 			return -EOPNOTSUPP;
-
+		}
 
 	// Not the right thing #Ooops
 	case PTP_CLK_REQ_PPS :
@@ -1209,7 +1232,8 @@ error:
 	return err;
 }
 
-static u16 bcm54210pe_get_base_nco6_reg(struct bcm54210pe_ptp *ptp, u16 val, bool do_nse_init) {
+static u16 bcm54210pe_get_base_nco6_reg(struct bcm54210pe_ptp *ptp, u16 val, bool do_nse_init)
+{
 
 	// Set Global mode to CPU system
 	val |= 0xC000;
