@@ -694,7 +694,7 @@ static int bcm54210pe_gettime(struct ptp_clock_info *info, struct timespec64 *ts
 	u16 nco_6_register_value;
 
 	// Set to do timestamp capture on next framesync
-	nco_6_register_value = 0x2000;
+	//nco_6_register_value = 0x2000;
 
 	// Amend to base register
 	nco_6_register_value = bcm54210pe_get_base_nco6_reg(ptp, nco_6_register_value, true);
@@ -740,11 +740,12 @@ static int bcm54210pe_gettimex(struct ptp_clock_info *info,
 	struct bcm54210pe_ptp *ptp = container_of(info, struct bcm54210pe_ptp, caps);
 
 
-	spin_lock_irqsave(&ptp->chosen->irq_spinlock, flags);
+	// Fixme: Takes too long getting scheduler warnings
+	//spin_lock_irqsave(&ptp->chosen->irq_spin_lock, flags);
 	ptp_read_system_prets(sts);
 	err = bcm54210pe_gettime(info, ts);
 	ptp_read_system_postts(sts);
-	spin_unlock_irqrestore(&ptp->chosen->irq_spinlock, flags);
+	//spin_unlock_irqrestore(&ptp->chosen->irq_spin_lock, flags);
 	return err;
 }
 
@@ -1093,7 +1094,7 @@ static const struct ptp_clock_info bcm54210pe_clk_caps = {
         .adjtime        = &bcm54210pe_adjtime,
         .adjfine        = &bcm54210pe_adjfine,
         .gettime64      = &bcm54210pe_gettime,
-	//.gettimex64	= &bcm54210pe_gettimex,
+	.gettimex64	= &bcm54210pe_gettimex,
         .settime64      = &bcm54210pe_settime,
 	.enable		= &bcm54210pe_feature_enable,
 	.verify		= &bcm54210pe_ptp_verify_pin,
@@ -1142,7 +1143,7 @@ int bcm54210pe_probe(struct phy_device *phydev)
         struct bcm54210pe_private *bcm54210pe;
 	struct ptp_pin_desc *sync_in_pin_desc, *sync_out_pin_desc;
 
-		bcm54210pe_sw_reset(phydev);
+	bcm54210pe_sw_reset(phydev);
 	bcm54210pe_config_1588(phydev);
 	bcm54210pe = kzalloc(sizeof(struct bcm54210pe_private), GFP_KERNEL);
         if (!bcm54210pe) {
@@ -1191,7 +1192,7 @@ int bcm54210pe_probe(struct phy_device *phydev)
 	mutex_init(&bcm54210pe->ptp->timeset_lock);
 
 	// Spinlock
-	spin_lock_init(&bcm54210pe->irq_spinlock);
+	spin_lock_init(&bcm54210pe->irq_spin_lock);
 
 	// Features
 	bcm54210pe->ts_capture = true;
@@ -1239,7 +1240,7 @@ static u16 bcm54210pe_get_base_nco6_reg(struct bcm54210pe_ptp *ptp, u16 val, boo
 		val |= 0x1000;
 	}
 
-	// NSE init
+	// TS Capture
 	if (ptp->chosen->ts_capture) {
 		val |= 0x2000;
 	}
