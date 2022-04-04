@@ -506,6 +506,8 @@ bool match_rx_timestamp_callback(struct mii_timestamper *mii_ts, struct sk_buff 
 
 irqreturn_t bcm54210pe_handle_interrupt_thread(int irq, void * phy_dat)
 {
+	trace_printk("bcm54210pe_handle_interrupt_thread\n");
+
 	printk("______________________________________________\n");
 	printk("______________________________________________\n");
 	printk("______________________________________________\n");
@@ -519,6 +521,7 @@ irqreturn_t bcm54210pe_handle_interrupt_thread(int irq, void * phy_dat)
 
 irqreturn_t bcm54210pe_handle_interrupt(int irq, void * phy_dat)
 {
+	trace_printk("bcm54210pe_handle_interrupt\n");
 	printk("______________________________________________\n");
 	printk("______________________________________________\n");
 	printk("______________________________________________\n");
@@ -644,37 +647,41 @@ static int bcm54210pe_config_1588(struct phy_device *phydev)
 
 	err = bcm_phy_write_exp(phydev, PTP_INTERRUPT_REG, 0x3c02 );
 
-	err =  bcm_phy_write_exp(phydev, GLOBAL_TIMESYNC_REG, 0x0001); //Enable global timesync register.
-	err =  bcm_phy_write_exp(phydev, EXT_1588_SLICE_REG, 0x0101); //ENABLE TX and RX slice 1588
-	err =  bcm_phy_write_exp(phydev, TX_EVENT_MODE_REG, 0xFF00); //Add 80bit timestamp + NO CPU MODE in TX
-	err =  bcm_phy_write_exp(phydev, RX_EVENT_MODE_REG, 0xFF00); //Add 32+32 bits timestamp + NO CPU mode in RX
-	err =  bcm_phy_write_exp(phydev, TIMECODE_SEL_REG, 0x0101); //Select 80 bit counter
+	err |=  bcm_phy_write_exp(phydev, GLOBAL_TIMESYNC_REG, 0x0001); //Enable global timesync register.
+	err |=  bcm_phy_write_exp(phydev, EXT_1588_SLICE_REG, 0x0101); //ENABLE TX and RX slice 1588
+	err |=  bcm_phy_write_exp(phydev, TX_EVENT_MODE_REG, 0xFF00); //Add 80bit timestamp + NO CPU MODE in TX
+	err |=  bcm_phy_write_exp(phydev, RX_EVENT_MODE_REG, 0xFF00); //Add 32+32 bits timestamp + NO CPU mode in RX
+	err |=  bcm_phy_write_exp(phydev, TIMECODE_SEL_REG, 0x0101); //Select 80 bit counter
 
 
-	err =  bcm_phy_write_exp(phydev, TX_TSCAPTURE_ENABLE_REG, 0x0001); //Enable timestamp capture in TX 
-	err =  bcm_phy_write_exp(phydev, RX_TSCAPTURE_ENABLE_REG, 0x0001); //Enable timestamp capture in RX
+	err |=  bcm_phy_write_exp(phydev, TX_TSCAPTURE_ENABLE_REG, 0x0001); //Enable timestamp capture in TX
+	err |=  bcm_phy_write_exp(phydev, RX_TSCAPTURE_ENABLE_REG, 0x0001); //Enable timestamp capture in RX
 
 	//Load Original Time Code Register
-	err =  bcm_phy_write_exp(phydev, ORIGINAL_TIME_CODE_0, 0x0064);
-	err =  bcm_phy_write_exp(phydev, ORIGINAL_TIME_CODE_1, 0x0064);
-	err =  bcm_phy_write_exp(phydev, ORIGINAL_TIME_CODE_2, 0x0064);
-	err =  bcm_phy_write_exp(phydev, ORIGINAL_TIME_CODE_3, 0x0064);
-	err =  bcm_phy_write_exp(phydev, ORIGINAL_TIME_CODE_4, 0x0064);
+	//err =  bcm_phy_write_exp(phydev, ORIGINAL_TIME_CODE_0, 0x0064);
+	//err =  bcm_phy_write_exp(phydev, ORIGINAL_TIME_CODE_1, 0x0064);
+	//err =  bcm_phy_write_exp(phydev, ORIGINAL_TIME_CODE_2, 0x0064);
+	//err =  bcm_phy_write_exp(phydev, ORIGINAL_TIME_CODE_3, 0x0064);
+	//err =  bcm_phy_write_exp(phydev, ORIGINAL_TIME_CODE_4, 0x0064);
 
 	//Enable shadow register
-	err = bcm_phy_write_exp(phydev, SHADOW_REG_CONTROL, 0x0000);
-	err = bcm_phy_write_exp(phydev, SHADOW_REG_LOAD, 0x07c0);
+	err |= bcm_phy_write_exp(phydev, SHADOW_REG_CONTROL, 0x0000);
+	err |= bcm_phy_write_exp(phydev, SHADOW_REG_LOAD, 0x07c0);
 
 	//1n ts resolution
-	err = bcm_phy_write_exp(phydev, DPLL_SELECT_REG, 0x0160);
+	//err = bcm_phy_write_exp(phydev, DPLL_SELECT_REG, 0x0160);
 
 	// Trigger immediate framesync and capture timestamp
-	err =  bcm_phy_write_exp(phydev, NSE_DPPL_NCO_6_REG, 0xF020);
+	//err =  bcm_phy_write_exp(phydev, NSE_DPPL_NCO_6_REG, 0xF020);
+	err |=  bcm_phy_write_exp(phydev, NSE_DPPL_NCO_6_REG, 0xD020);
 
 	//15, 33 or 41 - experimental
 	printk("DEBUG: GPIO %d IRQ %d\n", 15, gpio_to_irq(41));
-	
-	err = request_threaded_irq(gpio_to_irq(41), bcm54210pe_handle_interrupt, bcm54210pe_handle_interrupt_thread,
+
+	// Enable Interrupt behaviour
+	err |= bcm54210pe_enable_interrupts(phydev,true, false);
+
+	err |= request_threaded_irq(gpio_to_irq(41), bcm54210pe_handle_interrupt, bcm54210pe_handle_interrupt_thread,
 								IRQF_ONESHOT | IRQF_SHARED,
 								phydev_name(phydev), phydev);
 
@@ -1195,7 +1202,7 @@ int bcm54210pe_probe(struct phy_device *phydev)
 	spin_lock_init(&bcm54210pe->irq_spin_lock);
 
 	// Features
-	bcm54210pe->ts_capture = true;
+	bcm54210pe->ts_capture = false;
 	bcm54210pe->one_step = false;
 	bcm54210pe->extts_en = false;
 	bcm54210pe->per_out_en = false;
@@ -1216,7 +1223,7 @@ int bcm54210pe_probe(struct phy_device *phydev)
 	ptp->caps.owner = THIS_MODULE;
 
 	bcm54210pe->ptp->ptp_clock = ptp_clock_register(&bcm54210pe->ptp->caps, &phydev->mdio.dev);
-	
+
 	if (IS_ERR(bcm54210pe->ptp->ptp_clock)) {
                         err = PTR_ERR(bcm54210pe->ptp->ptp_clock);
                         goto error;
