@@ -80,8 +80,6 @@
 #define TX_TS_OFFSET_MSB		0x0835
 #define RX_TS_OFFSET_LSB		0x0844
 #define RX_TS_OFFSET_MSB		0x0845
-#define NSE_DPPL_NCO_6_REG		0x087F
-#define NSE_DPPL_NCO_4_REG		0x087B
 #define NSE_DPPL_NCO_1_LSB_REG		0x0873
 #define NSE_DPPL_NCO_1_MSB_REG		0x0874
 
@@ -92,6 +90,14 @@
 #define NSE_DPPL_NCO_3_0_REG		0x0878
 #define NSE_DPPL_NCO_3_1_REG		0x0879
 #define NSE_DPPL_NCO_3_2_REG		0x087A
+
+#define NSE_DPPL_NCO_4_REG		0x087B
+
+#define NSE_DPPL_NCO_5_0_REG		0x087C
+#define NSE_DPPL_NCO_5_1_REG		0x087D
+#define NSE_DPPL_NCO_5_2_REG		0x087E
+
+#define NSE_DPPL_NCO_6_REG		0x087F
 
 #define DPLL_SELECT_REG			0x085b
 #define TIMECODE_SEL_REG		0x08C3
@@ -564,80 +570,6 @@ irqreturn_t bcm54210pe_handle_interrupt(int irq, void * phy_dat)
 	return IRQ_WAKE_THREAD;
 }
 
-static int bcm54210pe_perout_en(struct bcm54210pe_ptp *ptp, s64 period, s64 pulsewidth, int on)
-{
-	int err;
-	struct phy_device *phydev;
-	u16 nco_6_register_value, frequency_hi, frequency_lo, pulsewidth_reg;
-
-	phydev = ptp->chosen->phydev;
-
-	if (on) {
-		frequency_hi = 0;
-		frequency_lo = 0;
-		pulsewidth_reg = 0;
-
-		// Convert interval pulse spacing (period) and pulsewidth to 8 ns units
-		period /= 8;
-		pulsewidth /= 8;
-
-		// IF pulsewidth is not explicitly set with PTP_PEROUT_DUTY_CYCLE
-		if (pulsewidth == 0) {
-			if (period < 2500) {
-				// At a frequency at less than 20us (2500 x 8ns) set pulse length to 1/10th of the interval pulse spacing
-				pulsewidth = period / 10;
-
-				// Where the interval pulse spacing is short, ensure we set a pulse length of 8ns
-				if (pulsewidth == 0)
-					pulsewidth = 1;
-
-			} else {
-				// Otherwise set pulse with to 4us (8ns x 500 = 4us)
-				pulsewidth = 500;
-			}
-		}
-
-		frequency_lo 	 = (u16)period; 			// Lowest 16 bits of 8ns interval pulse spacing [15:0]
-		frequency_hi	 = (u16) (0x3FFF & (period >> 16));	// Highest 14 bits of 8ns interval pulse spacing [29:16]
-		frequency_hi	|= (u16) pulsewidth << 14; 		// 2 lowest bits of 8ns pulse length [1:0]
-		pulsewidth_reg	 = (u16) (0x7F & (pulsewidth >> 2));	// 7 highest bit  of 8 ns pulse length [8:2]
-
-		// Set enable per_out
-		ptp->chosen->per_out_en = true;
-
-		// Get base value
-		nco_6_register_value = bcm54210pe_get_base_nco6_reg(ptp, nco_6_register_value, true);
-
-		// Write to register
-		err = bcm_phy_write_exp(phydev, NSE_DPPL_NCO_6_REG, nco_6_register_value);
-
-		// Set sync out pulse interval spacing and pulse length
-		err |= bcm_phy_write_exp(phydev, NSE_DPPL_NCO_3_0_REG, frequency_lo);
-		err |= bcm_phy_write_exp(phydev, NSE_DPPL_NCO_3_1_REG, frequency_hi);
-		err |= bcm_phy_write_exp(phydev, NSE_DPPL_NCO_3_2_REG, pulsewidth_reg);
-
-		// On next framesync load sync out frequency
-		err |= bcm_phy_write_exp(phydev, SHADOW_REG_LOAD, 0x0200);
-
-		// Trigger immediate framesync framesync
-		err |= bcm_phy_modify_exp(phydev, NSE_DPPL_NCO_6_REG, 0x003C, 0x0020);
-
-	} else {
-
-		// Set disable pps
-		ptp->chosen->per_out_en = false;
-
-		// Get base value
-		nco_6_register_value = bcm54210pe_get_base_nco6_reg(ptp, nco_6_register_value, true);
-
-		// Write to register
-		err = bcm_phy_write_exp(phydev, NSE_DPPL_NCO_6_REG, nco_6_register_value);
-	}
-
-	return err;
-}
-
-
 static int bcm54210pe_config_1588(struct phy_device *phydev)
 {
 	print_function_message("bcm54210pe_config_1588", NULL, 0);
@@ -652,8 +584,6 @@ static int bcm54210pe_config_1588(struct phy_device *phydev)
 	err |=  bcm_phy_write_exp(phydev, TX_EVENT_MODE_REG, 0xFF00); //Add 80bit timestamp + NO CPU MODE in TX
 	err |=  bcm_phy_write_exp(phydev, RX_EVENT_MODE_REG, 0xFF00); //Add 32+32 bits timestamp + NO CPU mode in RX
 	err |=  bcm_phy_write_exp(phydev, TIMECODE_SEL_REG, 0x0101); //Select 80 bit counter
-
-
 	err |=  bcm_phy_write_exp(phydev, TX_TSCAPTURE_ENABLE_REG, 0x0001); //Enable timestamp capture in TX
 	err |=  bcm_phy_write_exp(phydev, RX_TSCAPTURE_ENABLE_REG, 0x0001); //Enable timestamp capture in RX
 
@@ -912,6 +842,95 @@ static int bcm54210pe_adjtime(struct ptp_clock_info *info, s64 delta)
 
 finish:
 	mutex_unlock(&ptp->timeset_lock);
+	return err;
+}
+
+
+static int bcm54210pe_perout_en(struct bcm54210pe_ptp *ptp, s64 period, s64 pulsewidth, int on)
+{
+	int err;
+	struct phy_device *phydev;
+	u16 nco_6_register_value, frequency_hi, frequency_lo, pulsewidth_reg, pulse_start_hi, pulse_start_lo;
+
+	phydev = ptp->chosen->phydev;
+
+	if (on) {
+		frequency_hi = 0;
+		frequency_lo = 0;
+		pulsewidth_reg = 0;
+		pulse_start_hi = 0;
+		pulse_start_lo = 0;
+
+		// Convert interval pulse spacing (period) and pulsewidth to 8 ns units
+		period /= 8;
+		pulsewidth /= 8;
+
+		// IF pulsewidth is not explicitly set with PTP_PEROUT_DUTY_CYCLE
+		if (pulsewidth == 0) {
+			if (period < 2500) {
+				// At a frequency at less than 20us (2500 x 8ns) set pulse length to 1/10th of the interval pulse spacing
+				pulsewidth = period / 10;
+
+				// Where the interval pulse spacing is short, ensure we set a pulse length of 8ns
+				if (pulsewidth == 0)
+					pulsewidth = 1;
+
+			} else {
+				// Otherwise set pulse with to 4us (8ns x 500 = 4us)
+				pulsewidth = 500;
+			}
+		}
+
+		frequency_lo 	 = (u16)period; 			// Lowest 16 bits of 8ns interval pulse spacing [15:0]
+		frequency_hi	 = (u16) (0x3FFF & (period >> 16));	// Highest 14 bits of 8ns interval pulse spacing [29:16]
+		frequency_hi	|= (u16) pulsewidth << 14; 		// 2 lowest bits of 8ns pulse length [1:0]
+		pulsewidth_reg	 = (u16) (0x7F & (pulsewidth >> 2));	// 7 highest bit  of 8 ns pulse length [8:2]
+
+		// New Stuff Start
+		struct timespec64 ts;
+		ts.tv_sec = 0;
+		ts.tv_nsec = 0;
+		//bcm54210pe_gettime(NULL, &ts);
+		pulse_start_hi = (u16) ts.tv_sec + 2;
+		bcm_phy_write_exp(phydev, NSE_DPPL_NCO_5_0_REG, frequency_lo);
+		bcm_phy_write_exp(phydev, NSE_DPPL_NCO_5_1_REG, frequency_lo);
+		bcm_phy_write_exp(phydev, NSE_DPPL_NCO_5_2_REG, frequency_hi);
+		// New Stuff End
+
+
+		// Set enable per_out
+		ptp->chosen->per_out_en = true;
+
+		// Get base value
+		nco_6_register_value = bcm54210pe_get_base_nco6_reg(ptp, nco_6_register_value, true);
+
+		nco_6_register_value |= 0x0001; // For mode 3
+		// Write to register
+		err = bcm_phy_write_exp(phydev, NSE_DPPL_NCO_6_REG, nco_6_register_value);
+
+		// Set sync out pulse interval spacing and pulse length
+		err |= bcm_phy_write_exp(phydev, NSE_DPPL_NCO_3_0_REG, frequency_lo);
+		err |= bcm_phy_write_exp(phydev, NSE_DPPL_NCO_3_1_REG, frequency_hi);
+		err |= bcm_phy_write_exp(phydev, NSE_DPPL_NCO_3_2_REG, pulsewidth_reg);
+
+		// On next framesync load sync out frequency
+		err |= bcm_phy_write_exp(phydev, SHADOW_REG_LOAD, 0x0200);
+
+		// Trigger immediate framesync framesync
+		err |= bcm_phy_modify_exp(phydev, NSE_DPPL_NCO_6_REG, 0x003C, 0x0020);
+
+	} else {
+
+		// Set disable pps
+		ptp->chosen->per_out_en = false;
+
+		// Get base value
+		nco_6_register_value = bcm54210pe_get_base_nco6_reg(ptp, nco_6_register_value, true);
+
+		// Write to register
+		err = bcm_phy_write_exp(phydev, NSE_DPPL_NCO_6_REG, nco_6_register_value);
+	}
+
 	return err;
 }
 
