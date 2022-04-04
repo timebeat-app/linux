@@ -506,6 +506,8 @@ bool match_rx_timestamp_callback(struct mii_timestamper *mii_ts, struct sk_buff 
 
 irqreturn_t bcm54210pe_handle_interrupt_thread(int irq, void * phy_dat)
 {
+	trace_printk("bcm54210pe_handle_interrupt_thread\n");
+
 	printk("______________________________________________\n");
 	printk("______________________________________________\n");
 	printk("______________________________________________\n");
@@ -519,6 +521,7 @@ irqreturn_t bcm54210pe_handle_interrupt_thread(int irq, void * phy_dat)
 
 irqreturn_t bcm54210pe_handle_interrupt(int irq, void * phy_dat)
 {
+	trace_printk("bcm54210pe_handle_interrupt\n");
 	printk("______________________________________________\n");
 	printk("______________________________________________\n");
 	printk("______________________________________________\n");
@@ -644,37 +647,37 @@ static int bcm54210pe_config_1588(struct phy_device *phydev)
 
 	err = bcm_phy_write_exp(phydev, PTP_INTERRUPT_REG, 0x3c02 );
 
-	err =  bcm_phy_write_exp(phydev, GLOBAL_TIMESYNC_REG, 0x0001); //Enable global timesync register.
-	err =  bcm_phy_write_exp(phydev, EXT_1588_SLICE_REG, 0x0101); //ENABLE TX and RX slice 1588
-	err =  bcm_phy_write_exp(phydev, TX_EVENT_MODE_REG, 0xFF00); //Add 80bit timestamp + NO CPU MODE in TX
-	err =  bcm_phy_write_exp(phydev, RX_EVENT_MODE_REG, 0xFF00); //Add 32+32 bits timestamp + NO CPU mode in RX
-	err =  bcm_phy_write_exp(phydev, TIMECODE_SEL_REG, 0x0101); //Select 80 bit counter
+	err |=  bcm_phy_write_exp(phydev, GLOBAL_TIMESYNC_REG, 0x0001); //Enable global timesync register.
+	err |=  bcm_phy_write_exp(phydev, EXT_1588_SLICE_REG, 0x0101); //ENABLE TX and RX slice 1588
+	err |=  bcm_phy_write_exp(phydev, TX_EVENT_MODE_REG, 0xFF00); //Add 80bit timestamp + NO CPU MODE in TX
+	err |=  bcm_phy_write_exp(phydev, RX_EVENT_MODE_REG, 0xFF00); //Add 32+32 bits timestamp + NO CPU mode in RX
+	err |=  bcm_phy_write_exp(phydev, TIMECODE_SEL_REG, 0x0101); //Select 80 bit counter
 
 
-	err =  bcm_phy_write_exp(phydev, TX_TSCAPTURE_ENABLE_REG, 0x0001); //Enable timestamp capture in TX 
-	err =  bcm_phy_write_exp(phydev, RX_TSCAPTURE_ENABLE_REG, 0x0001); //Enable timestamp capture in RX
-
-	//Load Original Time Code Register
-	err =  bcm_phy_write_exp(phydev, ORIGINAL_TIME_CODE_0, 0x0064);
-	err =  bcm_phy_write_exp(phydev, ORIGINAL_TIME_CODE_1, 0x0064);
-	err =  bcm_phy_write_exp(phydev, ORIGINAL_TIME_CODE_2, 0x0064);
-	err =  bcm_phy_write_exp(phydev, ORIGINAL_TIME_CODE_3, 0x0064);
-	err =  bcm_phy_write_exp(phydev, ORIGINAL_TIME_CODE_4, 0x0064);
+	err |=  bcm_phy_write_exp(phydev, TX_TSCAPTURE_ENABLE_REG, 0x0001); //Enable timestamp capture in TX
+	err |=  bcm_phy_write_exp(phydev, RX_TSCAPTURE_ENABLE_REG, 0x0001); //Enable timestamp capture in RX
 
 	//Enable shadow register
-	err = bcm_phy_write_exp(phydev, SHADOW_REG_CONTROL, 0x0000);
-	err = bcm_phy_write_exp(phydev, SHADOW_REG_LOAD, 0x07c0);
+	err |= bcm_phy_write_exp(phydev, SHADOW_REG_CONTROL, 0x0000);
+	err |= bcm_phy_write_exp(phydev, SHADOW_REG_LOAD, 0x07c0);
 
 	//1n ts resolution
-	err = bcm_phy_write_exp(phydev, DPLL_SELECT_REG, 0x0160);
+	//err = bcm_phy_write_exp(phydev, DPLL_SELECT_REG, 0x0160);
 
-	// Trigger immediate framesync and capture timestamp
-	err =  bcm_phy_write_exp(phydev, NSE_DPPL_NCO_6_REG, 0xF020);
+	// Heartbeat register selection. Latch 80 bit Original time coude counter into Heartbeat register
+	// (this is undocumented)
+	err = bcm_phy_write_exp(phydev, DPLL_SELECT_REG, 0x0040);
+
+	// Set global mode and trigger immediate framesync to load shaddow registers
+	err |=  bcm_phy_write_exp(phydev, NSE_DPPL_NCO_6_REG, 0xC020);
 
 	//15, 33 or 41 - experimental
 	printk("DEBUG: GPIO %d IRQ %d\n", 15, gpio_to_irq(41));
-	
-	err = request_threaded_irq(gpio_to_irq(41), bcm54210pe_handle_interrupt, bcm54210pe_handle_interrupt_thread,
+
+	// Enable Interrupt behaviour
+	err |= bcm54210pe_enable_interrupts(phydev,true, false);
+
+	err |= request_threaded_irq(gpio_to_irq(41), bcm54210pe_handle_interrupt, bcm54210pe_handle_interrupt_thread,
 								IRQF_ONESHOT | IRQF_SHARED,
 								phydev_name(phydev), phydev);
 
@@ -693,9 +696,9 @@ static int bcm54210pe_gettime(struct ptp_clock_info *info, struct timespec64 *ts
 	struct phy_device *phydev = ptp->chosen->phydev;
 	u16 nco_6_register_value;
 
-	// Set to do timestamp capture on next framesync
-	nco_6_register_value = 0x2000;
 
+	/*
+	// Working approach - slow
 	// Amend to base register
 	nco_6_register_value = bcm54210pe_get_base_nco6_reg(ptp, nco_6_register_value, true);
 
@@ -704,9 +707,6 @@ static int bcm54210pe_gettime(struct ptp_clock_info *info, struct timespec64 *ts
 
 	// Trigger framesync
 	bcm_phy_modify_exp(phydev, NSE_DPPL_NCO_6_REG, 0x003C, 0x0020);
-	//bcm_phy_modify_exp(phydev, NSE_DPPL_NCO_6_REG, 0x203C, 0x2020);
-
-	//udelay(50);
 
 	// Set Heart beat time read start
 	bcm_phy_write_exp(phydev, CTR_DBG_REG, 0x400);
@@ -721,8 +721,42 @@ static int bcm54210pe_gettime(struct ptp_clock_info *info, struct timespec64 *ts
 	bcm_phy_write_exp(phydev, CTR_DBG_REG, 0x000);
 	
 	u64 time_stamp = ts_to_ns(Time);
-			
-	print_function_message("ptp_clock_info", "time_stamp", time_stamp);
+	*/
+
+	int i;
+	u64 time_stamp;
+
+	// Amend to base register
+	nco_6_register_value = bcm54210pe_get_base_nco6_reg(ptp, nco_6_register_value, false);
+
+	// Set the NCO register
+	bcm_phy_write_exp(phydev, NSE_DPPL_NCO_6_REG, nco_6_register_value);
+
+	// Trigger framesync
+	bcm_phy_modify_exp(phydev, NSE_DPPL_NCO_6_REG, 0x003C, 0x0020);
+
+	for (i = 0; i < 100;i++) {
+
+		bcm_phy_write_exp(phydev, CTR_DBG_REG, 0x400);
+		Time[4] = bcm_phy_read_exp(phydev, HEART_BEAT_REG4);
+		Time[3] = bcm_phy_read_exp(phydev, HEART_BEAT_REG3);
+		Time[2] = bcm_phy_read_exp(phydev, HEART_BEAT_REG2);
+		Time[1] = bcm_phy_read_exp(phydev, HEART_BEAT_REG1);
+		Time[0] = bcm_phy_read_exp(phydev, HEART_BEAT_REG0);
+
+		// Set read end bit
+		bcm_phy_write_exp(phydev, CTR_DBG_REG, 0x800);
+		bcm_phy_write_exp(phydev, CTR_DBG_REG, 0x000);
+
+		time_stamp = ts_to_ns(Time);
+		printk("Timestamp (%d): %llu\n", i, time_stamp);
+
+		if (time_stamp != 0) {
+			break;
+		}
+	}
+
+	//print_function_message("ptp_clock_info", "time_stamp", time_stamp);
 
 	ts->tv_sec = ( (u64)time_stamp / (u64)1000000000 );
 	ts->tv_nsec = ( (u64)time_stamp % (u64)1000000000 );
@@ -740,11 +774,12 @@ static int bcm54210pe_gettimex(struct ptp_clock_info *info,
 	struct bcm54210pe_ptp *ptp = container_of(info, struct bcm54210pe_ptp, caps);
 
 
-	spin_lock_irqsave(&ptp->chosen->irq_spinlock, flags);
+	// Fixme: Takes too long getting scheduler warnings
+	//spin_lock_irqsave(&ptp->chosen->irq_spin_lock, flags);
 	ptp_read_system_prets(sts);
 	err = bcm54210pe_gettime(info, ts);
 	ptp_read_system_postts(sts);
-	spin_unlock_irqrestore(&ptp->chosen->irq_spinlock, flags);
+	//spin_unlock_irqrestore(&ptp->chosen->irq_spin_lock, flags);
 	return err;
 }
 
@@ -768,26 +803,27 @@ static int bcm54210pe_settime(struct ptp_clock_info *info, const struct timespec
 	var[1] = (int) ((ts->tv_nsec & 0x00000000FFFF0000) >> 16);
 	var[0] = (int) (ts->tv_nsec & 0x000000000000FFFF); 
 
-	phy_lock_mdio_bus(phydev);
+	//phy_lock_mdio_bus(phydev);
 
 	//__bcm_phy_write_exp(phydev, NSE_DPPL_NCO_6_REG, 0xF000);
 
 	//Load Original Time Code Register
-	__bcm_phy_write_exp(phydev, ORIGINAL_TIME_CODE_0, var[0]);
-	__bcm_phy_write_exp(phydev, ORIGINAL_TIME_CODE_1, var[1]);
-	__bcm_phy_write_exp(phydev, ORIGINAL_TIME_CODE_2, var[2]);
-	__bcm_phy_write_exp(phydev, ORIGINAL_TIME_CODE_3, var[3]);
-	__bcm_phy_write_exp(phydev, ORIGINAL_TIME_CODE_4, var[4]);
+	bcm_phy_write_exp(phydev, ORIGINAL_TIME_CODE_0, var[0]);
+	bcm_phy_write_exp(phydev, ORIGINAL_TIME_CODE_1, var[1]);
+	bcm_phy_write_exp(phydev, ORIGINAL_TIME_CODE_2, var[2]);
+	bcm_phy_write_exp(phydev, ORIGINAL_TIME_CODE_3, var[3]);
+	bcm_phy_write_exp(phydev, ORIGINAL_TIME_CODE_4, var[4]);
 
 	//Enable shadow register
-	__bcm_phy_write_exp(phydev, SHADOW_REG_CONTROL, 0x0000);
-	__bcm_phy_write_exp(phydev, SHADOW_REG_LOAD, 0x0400);
+	bcm_phy_write_exp(phydev, SHADOW_REG_CONTROL, 0x0000);
+	bcm_phy_write_exp(phydev, SHADOW_REG_LOAD, 0x0400);
 
-	__bcm_phy_modify_exp(phydev, NSE_DPPL_NCO_6_REG, 0x003C, 0x0020);
+	bcm_phy_write_exp(phydev, NSE_DPPL_NCO_6_REG, 0xD000);
+	bcm_phy_modify_exp(phydev, NSE_DPPL_NCO_6_REG, 0x003C, 0x0020);
 
 	//__bcm_phy_write_exp(phydev, NSE_DPPL_NCO_6_REG, 0xE020); //NCO Register 6 => Enable SYNC_OUT pulse train and Internal Syncout ad framesync
 
-	phy_unlock_mdio_bus(phydev);
+	//phy_unlock_mdio_bus(phydev);
 
 	struct timespec64 ts_new;
 
@@ -1093,7 +1129,7 @@ static const struct ptp_clock_info bcm54210pe_clk_caps = {
         .adjtime        = &bcm54210pe_adjtime,
         .adjfine        = &bcm54210pe_adjfine,
         .gettime64      = &bcm54210pe_gettime,
-	//.gettimex64	= &bcm54210pe_gettimex,
+	.gettimex64	= &bcm54210pe_gettimex,
         .settime64      = &bcm54210pe_settime,
 	.enable		= &bcm54210pe_feature_enable,
 	.verify		= &bcm54210pe_ptp_verify_pin,
@@ -1140,6 +1176,7 @@ int bcm54210pe_probe(struct phy_device *phydev)
 	int x, y;
 	struct bcm54210pe_ptp *ptp;
         struct bcm54210pe_private *bcm54210pe;
+	struct ptp_pin_desc *sync_in_pin_desc, *sync_out_pin_desc;
 
 	bcm54210pe_sw_reset(phydev);
 	bcm54210pe_config_1588(phydev);
@@ -1190,7 +1227,7 @@ int bcm54210pe_probe(struct phy_device *phydev)
 	mutex_init(&bcm54210pe->ptp->timeset_lock);
 
 	// Spinlock
-	spin_lock_init(&bcm54210pe->irq_spinlock);
+	spin_lock_init(&bcm54210pe->irq_spin_lock);
 
 	// Features
 	bcm54210pe->ts_capture = true;
@@ -1199,12 +1236,12 @@ int bcm54210pe_probe(struct phy_device *phydev)
 	bcm54210pe->per_out_en = false;
 
 	// Pin descriptions
-	struct ptp_pin_desc *sync_in_pin_desc = &bcm54210pe->sdp_config[SYNC_IN_PIN];
+	sync_in_pin_desc = &bcm54210pe->sdp_config[SYNC_IN_PIN];
 	snprintf(sync_in_pin_desc->name, sizeof(sync_in_pin_desc->name), "SYNC_IN");
 	sync_in_pin_desc->index = SYNC_IN_PIN;
 	sync_in_pin_desc->func = PTP_PF_NONE;
 
-	struct ptp_pin_desc *sync_out_pin_desc = &bcm54210pe->sdp_config[SYNC_OUT_PIN];
+	sync_out_pin_desc = &bcm54210pe->sdp_config[SYNC_OUT_PIN];
 	snprintf(sync_out_pin_desc->name, sizeof(sync_out_pin_desc->name), "SYNC_OUT");
 	sync_out_pin_desc->index = SYNC_OUT_PIN;
 	sync_out_pin_desc->func = PTP_PF_NONE;
@@ -1214,7 +1251,7 @@ int bcm54210pe_probe(struct phy_device *phydev)
 	ptp->caps.owner = THIS_MODULE;
 
 	bcm54210pe->ptp->ptp_clock = ptp_clock_register(&bcm54210pe->ptp->caps, &phydev->mdio.dev);
-	
+
 	if (IS_ERR(bcm54210pe->ptp->ptp_clock)) {
                         err = PTR_ERR(bcm54210pe->ptp->ptp_clock);
                         goto error;
@@ -1238,7 +1275,7 @@ static u16 bcm54210pe_get_base_nco6_reg(struct bcm54210pe_ptp *ptp, u16 val, boo
 		val |= 0x1000;
 	}
 
-	// NSE init
+	// TS Capture
 	if (ptp->chosen->ts_capture) {
 		val |= 0x2000;
 	}
