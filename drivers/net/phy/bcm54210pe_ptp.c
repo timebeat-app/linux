@@ -668,7 +668,7 @@ static int bcm54210pe_config_1588(struct phy_device *phydev)
 	// (this is undocumented)
 	err = bcm_phy_write_exp(phydev, DPLL_SELECT_REG, 0x0040);
 
-	// Set global mode and trigger immediate framesync
+	// Set global mode and trigger immediate framesync to load shaddow registers
 	err |=  bcm_phy_write_exp(phydev, NSE_DPPL_NCO_6_REG, 0xC020);
 
 	//15, 33 or 41 - experimental
@@ -803,27 +803,27 @@ static int bcm54210pe_settime(struct ptp_clock_info *info, const struct timespec
 	var[1] = (int) ((ts->tv_nsec & 0x00000000FFFF0000) >> 16);
 	var[0] = (int) (ts->tv_nsec & 0x000000000000FFFF); 
 
-	phy_lock_mdio_bus(phydev);
+	//phy_lock_mdio_bus(phydev);
 
 	//__bcm_phy_write_exp(phydev, NSE_DPPL_NCO_6_REG, 0xF000);
-	__bcm_phy_write_exp(phydev, NSE_DPPL_NCO_6_REG, 0xD000);
 
 	//Load Original Time Code Register
-	__bcm_phy_write_exp(phydev, ORIGINAL_TIME_CODE_0, var[0]);
-	__bcm_phy_write_exp(phydev, ORIGINAL_TIME_CODE_1, var[1]);
-	__bcm_phy_write_exp(phydev, ORIGINAL_TIME_CODE_2, var[2]);
-	__bcm_phy_write_exp(phydev, ORIGINAL_TIME_CODE_3, var[3]);
-	__bcm_phy_write_exp(phydev, ORIGINAL_TIME_CODE_4, var[4]);
+	bcm_phy_write_exp(phydev, ORIGINAL_TIME_CODE_0, var[0]);
+	bcm_phy_write_exp(phydev, ORIGINAL_TIME_CODE_1, var[1]);
+	bcm_phy_write_exp(phydev, ORIGINAL_TIME_CODE_2, var[2]);
+	bcm_phy_write_exp(phydev, ORIGINAL_TIME_CODE_3, var[3]);
+	bcm_phy_write_exp(phydev, ORIGINAL_TIME_CODE_4, var[4]);
 
 	//Enable shadow register
-	__bcm_phy_write_exp(phydev, SHADOW_REG_CONTROL, 0x0000);
-	__bcm_phy_write_exp(phydev, SHADOW_REG_LOAD, 0x0400);
+	bcm_phy_write_exp(phydev, SHADOW_REG_CONTROL, 0x0000);
+	bcm_phy_write_exp(phydev, SHADOW_REG_LOAD, 0x0400);
 
-	__bcm_phy_modify_exp(phydev, NSE_DPPL_NCO_6_REG, 0x003C, 0x0020);
+	bcm_phy_write_exp(phydev, NSE_DPPL_NCO_6_REG, 0xD000);
+	bcm_phy_modify_exp(phydev, NSE_DPPL_NCO_6_REG, 0x003C, 0x0020);
 
 	//__bcm_phy_write_exp(phydev, NSE_DPPL_NCO_6_REG, 0xE020); //NCO Register 6 => Enable SYNC_OUT pulse train and Internal Syncout ad framesync
 
-	phy_unlock_mdio_bus(phydev);
+	//phy_unlock_mdio_bus(phydev);
 
 	struct timespec64 ts_new;
 
