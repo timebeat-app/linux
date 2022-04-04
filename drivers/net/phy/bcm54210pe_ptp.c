@@ -657,13 +657,6 @@ static int bcm54210pe_config_1588(struct phy_device *phydev)
 	err |=  bcm_phy_write_exp(phydev, TX_TSCAPTURE_ENABLE_REG, 0x0001); //Enable timestamp capture in TX
 	err |=  bcm_phy_write_exp(phydev, RX_TSCAPTURE_ENABLE_REG, 0x0001); //Enable timestamp capture in RX
 
-	//Load Original Time Code Register
-	//err =  bcm_phy_write_exp(phydev, ORIGINAL_TIME_CODE_0, 0x0064);
-	//err =  bcm_phy_write_exp(phydev, ORIGINAL_TIME_CODE_1, 0x0064);
-	//err =  bcm_phy_write_exp(phydev, ORIGINAL_TIME_CODE_2, 0x0064);
-	//err =  bcm_phy_write_exp(phydev, ORIGINAL_TIME_CODE_3, 0x0064);
-	//err =  bcm_phy_write_exp(phydev, ORIGINAL_TIME_CODE_4, 0x0064);
-
 	//Enable shadow register
 	err |= bcm_phy_write_exp(phydev, SHADOW_REG_CONTROL, 0x0000);
 	err |= bcm_phy_write_exp(phydev, SHADOW_REG_LOAD, 0x07c0);
@@ -671,9 +664,12 @@ static int bcm54210pe_config_1588(struct phy_device *phydev)
 	//1n ts resolution
 	//err = bcm_phy_write_exp(phydev, DPLL_SELECT_REG, 0x0160);
 
-	// Trigger immediate framesync and capture timestamp
-	//err =  bcm_phy_write_exp(phydev, NSE_DPPL_NCO_6_REG, 0xF020);
-	err |=  bcm_phy_write_exp(phydev, NSE_DPPL_NCO_6_REG, 0xD020);
+	// Heartbeat register selection. Latch 80 bit Original time coude counter into Heartbeat register
+	// (this is undocumented)
+	err = bcm_phy_write_exp(phydev, DPLL_SELECT_REG, 0x0040);
+
+	// Set global mode and trigger immediate framesync
+	err |=  bcm_phy_write_exp(phydev, NSE_DPPL_NCO_6_REG, 0xC020);
 
 	//15, 33 or 41 - experimental
 	printk("DEBUG: GPIO %d IRQ %d\n", 15, gpio_to_irq(41));
@@ -700,9 +696,9 @@ static int bcm54210pe_gettime(struct ptp_clock_info *info, struct timespec64 *ts
 	struct phy_device *phydev = ptp->chosen->phydev;
 	u16 nco_6_register_value;
 
-	// Set to do timestamp capture on next framesync
-	//nco_6_register_value = 0x2000;
 
+	/*
+	// Working approach - slow
 	// Amend to base register
 	nco_6_register_value = bcm54210pe_get_base_nco6_reg(ptp, nco_6_register_value, true);
 
@@ -711,9 +707,6 @@ static int bcm54210pe_gettime(struct ptp_clock_info *info, struct timespec64 *ts
 
 	// Trigger framesync
 	bcm_phy_modify_exp(phydev, NSE_DPPL_NCO_6_REG, 0x003C, 0x0020);
-
-	//bcm_phy_modify_exp(phydev, NSE_DPPL_NCO_6_REG, 0x203C, 0x2020);
-	//udelay(50);
 
 	// Set Heart beat time read start
 	bcm_phy_write_exp(phydev, CTR_DBG_REG, 0x400);
@@ -728,8 +721,42 @@ static int bcm54210pe_gettime(struct ptp_clock_info *info, struct timespec64 *ts
 	bcm_phy_write_exp(phydev, CTR_DBG_REG, 0x000);
 	
 	u64 time_stamp = ts_to_ns(Time);
-			
-	print_function_message("ptp_clock_info", "time_stamp", time_stamp);
+	*/
+
+	int i;
+	u64 time_stamp;
+
+	// Amend to base register
+	nco_6_register_value = bcm54210pe_get_base_nco6_reg(ptp, nco_6_register_value, false);
+
+	// Set the NCO register
+	bcm_phy_write_exp(phydev, NSE_DPPL_NCO_6_REG, nco_6_register_value);
+
+	// Trigger framesync
+	bcm_phy_modify_exp(phydev, NSE_DPPL_NCO_6_REG, 0x003C, 0x0020);
+
+	for (i = 0; i < 100;i++) {
+
+		bcm_phy_write_exp(phydev, CTR_DBG_REG, 0x400);
+		Time[4] = bcm_phy_read_exp(phydev, HEART_BEAT_REG4);
+		Time[3] = bcm_phy_read_exp(phydev, HEART_BEAT_REG3);
+		Time[2] = bcm_phy_read_exp(phydev, HEART_BEAT_REG2);
+		Time[1] = bcm_phy_read_exp(phydev, HEART_BEAT_REG1);
+		Time[0] = bcm_phy_read_exp(phydev, HEART_BEAT_REG0);
+
+		// Set read end bit
+		bcm_phy_write_exp(phydev, CTR_DBG_REG, 0x800);
+		bcm_phy_write_exp(phydev, CTR_DBG_REG, 0x000);
+
+		time_stamp = ts_to_ns(Time);
+		printk("Timestamp (%d): %llu\n", i, time_stamp);
+
+		if (time_stamp != 0) {
+			break;
+		}
+	}
+
+	//print_function_message("ptp_clock_info", "time_stamp", time_stamp);
 
 	ts->tv_sec = ( (u64)time_stamp / (u64)1000000000 );
 	ts->tv_nsec = ( (u64)time_stamp % (u64)1000000000 );
@@ -779,6 +806,7 @@ static int bcm54210pe_settime(struct ptp_clock_info *info, const struct timespec
 	phy_lock_mdio_bus(phydev);
 
 	//__bcm_phy_write_exp(phydev, NSE_DPPL_NCO_6_REG, 0xF000);
+	__bcm_phy_write_exp(phydev, NSE_DPPL_NCO_6_REG, 0xD000);
 
 	//Load Original Time Code Register
 	__bcm_phy_write_exp(phydev, ORIGINAL_TIME_CODE_0, var[0]);
@@ -1202,7 +1230,7 @@ int bcm54210pe_probe(struct phy_device *phydev)
 	spin_lock_init(&bcm54210pe->irq_spin_lock);
 
 	// Features
-	bcm54210pe->ts_capture = false;
+	bcm54210pe->ts_capture = true;
 	bcm54210pe->one_step = false;
 	bcm54210pe->extts_en = false;
 	bcm54210pe->per_out_en = false;
