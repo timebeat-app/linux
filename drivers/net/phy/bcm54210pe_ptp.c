@@ -704,50 +704,58 @@ static int bcm54210pe_gettime(struct ptp_clock_info *info, struct timespec64 *ts
 
 static int bcm54210pe_settime(struct ptp_clock_info *info, const struct timespec64 *ts)
 {
-	uint64_t time_stamp = (ts->tv_sec * 1000000000) + ts->tv_nsec;
-	
-	print_function_message("bcm54210pe_settime", "time_stamp", time_stamp);
-	
-	//Kyle - Should figure / test this out.
+	//uint64_t time_stamp = (ts->tv_sec * 1000000000) + ts->tv_nsec;
+	u16 shadow_load_register;
+	int original_time_codes[5], local_time_codes[3];
 
-	int var[4];
+	shadow_load_register = 0;
+
+	//print_function_message("bcm54210pe_settime", "time_stamp", time_stamp);
 
 	struct bcm54210pe_ptp *ptp = container_of(info, struct bcm54210pe_ptp, caps);
 	struct phy_device *phydev = ptp->chosen->phydev;
 
-	var[4] = (int) ((ts->tv_sec & 0x0000FFFF00000000) >> 32);
-	var[3] = (int) ((ts->tv_sec  & 0x00000000FFFF0000) >> 16);
-	var[2] = (int) (ts->tv_sec  & 0x000000000000FFFF);
-	var[1] = (int) ((ts->tv_nsec & 0x00000000FFFF0000) >> 16);
-	var[0] = (int) (ts->tv_nsec & 0x000000000000FFFF); 
+	// Assign original time codes
+	original_time_codes[4] = (int) ((ts->tv_sec & 0x0000FFFF00000000) >> 32);
+	original_time_codes[3] = (int) ((ts->tv_sec  & 0x00000000FFFF0000) >> 16);
+	original_time_codes[2] = (int) (ts->tv_sec  & 0x000000000000FFFF);
+	original_time_codes[1] = (int) ((ts->tv_nsec & 0x00000000FFFF0000) >> 16);
+	original_time_codes[0] = (int) (ts->tv_nsec & 0x000000000000FFFF);
 
-	//phy_lock_mdio_bus(phydev);
+	// Write Original Time Code Register
+	bcm_phy_write_exp(phydev, ORIGINAL_TIME_CODE_0, original_time_codes[0]);
+	bcm_phy_write_exp(phydev, ORIGINAL_TIME_CODE_1, original_time_codes[1]);
+	bcm_phy_write_exp(phydev, ORIGINAL_TIME_CODE_2, original_time_codes[2]);
+	bcm_phy_write_exp(phydev, ORIGINAL_TIME_CODE_3, original_time_codes[3]);
+	bcm_phy_write_exp(phydev, ORIGINAL_TIME_CODE_4, original_time_codes[4]);
 
-	//__bcm_phy_write_exp(phydev, NSE_DPPL_NCO_6_REG, 0xF000);
+	// Set Local Time Code Register
+	local_time_codes[2] = 0x4000; 	               // Set FREQ_MDIO_SEL to 1
+	local_time_codes[1] = original_time_codes[1];
+	local_time_codes[0] = original_time_codes[0];
 
-	//Load Original Time Code Register
-	bcm_phy_write_exp(phydev, ORIGINAL_TIME_CODE_0, var[0]);
-	bcm_phy_write_exp(phydev, ORIGINAL_TIME_CODE_1, var[1]);
-	bcm_phy_write_exp(phydev, ORIGINAL_TIME_CODE_2, var[2]);
-	bcm_phy_write_exp(phydev, ORIGINAL_TIME_CODE_3, var[3]);
-	bcm_phy_write_exp(phydev, ORIGINAL_TIME_CODE_4, var[4]);
+	// Write Local Time Code Register
+	bcm_phy_write_exp(phydev, NSE_DPPL_NCO_2_0_REG, local_time_codes[0]);
+	bcm_phy_write_exp(phydev, NSE_DPPL_NCO_2_1_REG, local_time_codes[1]);
+	bcm_phy_write_exp(phydev, NSE_DPPL_NCO_2_1_REG, local_time_codes[2]);
 
-	//Enable shadow register
+	// Set Time Code load bit in the shadow load register
+	shadow_load_register |= 0x0400;
+
+	// Set Local Time load bit in the shadow load register
+	shadow_load_register |= 0x0080;
+
+	// Write Shadow register
 	bcm_phy_write_exp(phydev, SHADOW_REG_CONTROL, 0x0000);
-	bcm_phy_write_exp(phydev, SHADOW_REG_LOAD, 0x0400);
+	bcm_phy_write_exp(phydev, SHADOW_REG_LOAD, shadow_load_register);
 
+	// Set global mode and nse_init
 	bcm_phy_write_exp(phydev, NSE_DPPL_NCO_6_REG, 0xD000);
+
+	// Trigger framesync
 	bcm_phy_modify_exp(phydev, NSE_DPPL_NCO_6_REG, 0x003C, 0x0020);
 
-	//__bcm_phy_write_exp(phydev, NSE_DPPL_NCO_6_REG, 0xE020); //NCO Register 6 => Enable SYNC_OUT pulse train and Internal Syncout ad framesync
-
-	//phy_unlock_mdio_bus(phydev);
-
-	struct timespec64 ts_new;
-
-	bcm54210pe_gettime(info, &ts_new);
-	
-	return 0; 
+	return 0;
 }
 
 static int bcm54210pe_adjfine(struct ptp_clock_info *info, long scaled_ppm)
@@ -874,7 +882,9 @@ static int bcm54210pe_perout_en(struct bcm54210pe_ptp *ptp, s64 period, s64 puls
 		frequency_hi	|= (u16) pulsewidth << 14; 		// 2 lowest bits of 8ns pulse length [1:0]
 		pulsewidth_reg	 = (u16) (0x7F & (pulsewidth >> 2));	// 7 highest bit  of 8 ns pulse length [8:2]
 
+
 		// New Stuff Start
+		/*
 		struct timespec64 ts;
 		ts.tv_sec = 0;
 		ts.tv_nsec = 0;
@@ -883,6 +893,7 @@ static int bcm54210pe_perout_en(struct bcm54210pe_ptp *ptp, s64 period, s64 puls
 		bcm_phy_write_exp(phydev, NSE_DPPL_NCO_5_0_REG, frequency_lo);
 		bcm_phy_write_exp(phydev, NSE_DPPL_NCO_5_1_REG, frequency_lo);
 		bcm_phy_write_exp(phydev, NSE_DPPL_NCO_5_2_REG, frequency_hi);
+		*/
 		// New Stuff End
 
 
@@ -893,6 +904,7 @@ static int bcm54210pe_perout_en(struct bcm54210pe_ptp *ptp, s64 period, s64 puls
 		nco_6_register_value = bcm54210pe_get_base_nco6_reg(ptp, nco_6_register_value, true);
 
 		nco_6_register_value |= 0x0001; // For mode 3
+
 		// Write to register
 		err = bcm_phy_write_exp(phydev, NSE_DPPL_NCO_6_REG, nco_6_register_value);
 
@@ -1187,6 +1199,9 @@ int bcm54210pe_probe(struct phy_device *phydev)
 
 	bcm54210pe_sw_reset(phydev);
 	bcm54210pe_config_1588(phydev);
+
+	printk("PHY_DEV INTERRUPTS: %d\n", phydev->interrupts);
+	printk("PHY_DEV IRQ: %d\n", phydev->irq);
 	bcm54210pe = kzalloc(sizeof(struct bcm54210pe_private), GFP_KERNEL);
         if (!bcm54210pe) {
 		err = -ENOMEM;
