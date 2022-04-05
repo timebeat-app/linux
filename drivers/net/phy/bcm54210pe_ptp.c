@@ -617,44 +617,23 @@ static int bcm54210pe_config_1588(struct phy_device *phydev)
 	return err; 
 }
 
-static int bcm54210pe_gettime(struct ptp_clock_info *info, struct timespec64 *ts)
+static int bcm54210pe_gettimex(struct ptp_clock_info *info,
+			       struct timespec64 *ts,
+			       struct ptp_system_timestamp *sts)
 {
 	
+
+	// Fixme: Takes too long getting scheduler warnings
 	u16 Time[5] = {0,0,0,0,0};
 	
 	struct bcm54210pe_ptp *ptp = container_of(info, struct bcm54210pe_ptp, caps);
 	struct phy_device *phydev = ptp->chosen->phydev;
 	u16 nco_6_register_value;
-
-
-	/*
-	// Working approach - slow
-	// Amend to base register
-	nco_6_register_value = bcm54210pe_get_base_nco6_reg(ptp, nco_6_register_value, true);
-
-        // Set the NCO register
-	bcm_phy_write_exp(phydev, NSE_DPPL_NCO_6_REG, nco_6_register_value);
-
-	// Trigger framesync
-	bcm_phy_modify_exp(phydev, NSE_DPPL_NCO_6_REG, 0x003C, 0x0020);
-
-	// Set Heart beat time read start
-	bcm_phy_write_exp(phydev, CTR_DBG_REG, 0x400);
-	Time[4] = bcm_phy_read_exp(phydev, HEART_BEAT_REG4);
-	Time[3] = bcm_phy_read_exp(phydev, HEART_BEAT_REG3);
-	Time[2] = bcm_phy_read_exp(phydev, HEART_BEAT_REG2);
-	Time[1] = bcm_phy_read_exp(phydev, HEART_BEAT_REG1);
-	Time[0] = bcm_phy_read_exp(phydev, HEART_BEAT_REG0);
-
-	// Set read end bit
-	bcm_phy_write_exp(phydev, CTR_DBG_REG, 0x800);
-	bcm_phy_write_exp(phydev, CTR_DBG_REG, 0x000);
-	
-	u64 time_stamp = ts_to_ns(Time);
-	*/
-
+	//unsigned long flags;
 	int i;
 	u64 time_stamp;
+
+	nco_6_register_value = 0x0000;
 
 	// Amend to base register
 	nco_6_register_value = bcm54210pe_get_base_nco6_reg(ptp, nco_6_register_value, false);
@@ -663,9 +642,30 @@ static int bcm54210pe_gettime(struct ptp_clock_info *info, struct timespec64 *ts
 	bcm_phy_write_exp(phydev, NSE_DPPL_NCO_6_REG, nco_6_register_value);
 
 	// Trigger framesync
-	bcm_phy_modify_exp(phydev, NSE_DPPL_NCO_6_REG, 0x003C, 0x0020);
+	if (sts != NULL) {
 
-	for (i = 0; i < 100;i++) {
+		// If we are doing a gettimex call
+		ptp_read_system_prets(sts);
+		bcm_phy_modify_exp(phydev, NSE_DPPL_NCO_6_REG, 0x003C, 0x0020);
+		ptp_read_system_postts(sts);
+
+		/*
+		//Can't lock. unimac_mdio_write relies on bcmgenet_mii_wait. Can't sleep on spin lock. #ZZZzzz
+		phy_lock_mdio_bus(phydev);
+		spin_lock_irqsave(&ptp->chosen->irq_spin_lock, flags);
+		ptp_read_system_prets(sts);
+		__bcm_phy_modify_exp(phydev, NSE_DPPL_NCO_6_REG, 0x003C, 0x0020);
+		ptp_read_system_postts(sts);
+		spin_unlock_irqrestore(&ptp->chosen->irq_spin_lock, flags);
+		phy_unlock_mdio_bus(phydev);
+		*/
+	} else {
+
+		// or if we are doing a gettime call
+		bcm_phy_modify_exp(phydev, NSE_DPPL_NCO_6_REG, 0x003C, 0x0020);
+	}
+
+	for (i = 0; i < 5;i++) {
 
 		bcm_phy_write_exp(phydev, CTR_DBG_REG, 0x400);
 		Time[4] = bcm_phy_read_exp(phydev, HEART_BEAT_REG4);
@@ -694,22 +694,10 @@ static int bcm54210pe_gettime(struct ptp_clock_info *info, struct timespec64 *ts
 	return 0;
 }
 
-static int bcm54210pe_gettimex(struct ptp_clock_info *info,
-			       struct timespec64 *ts,
-			       struct ptp_system_timestamp *sts)
+static int bcm54210pe_gettime(struct ptp_clock_info *info, struct timespec64 *ts)
 {
 	int err;
-	unsigned long flags;
-
-	struct bcm54210pe_ptp *ptp = container_of(info, struct bcm54210pe_ptp, caps);
-
-
-	// Fixme: Takes too long getting scheduler warnings
-	//spin_lock_irqsave(&ptp->chosen->irq_spin_lock, flags);
-	ptp_read_system_prets(sts);
-	err = bcm54210pe_gettime(info, ts);
-	ptp_read_system_postts(sts);
-	//spin_unlock_irqrestore(&ptp->chosen->irq_spin_lock, flags);
+	err = bcm54210pe_gettimex(info, ts, NULL);
 	return err;
 }
 
