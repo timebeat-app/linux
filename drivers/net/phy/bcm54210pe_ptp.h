@@ -35,7 +35,7 @@ struct bcm54210pe_circular_buffer_item
 	u8 domain_number;
 	u8 msg_type;
 	u16 sequence_id;
-    u16 source_clock_id[4];
+    	u16 source_clock_id[4];
 	u16 port_number;
 	
 	u64 time_stamp;	
@@ -59,6 +59,7 @@ struct bcm54210pe_private {
 	bool one_step;
 	bool per_out_en;
 	bool extts_en;
+	int  second_on_set;
 
 	struct sk_buff_head tx_skb_queue;
 		
@@ -67,7 +68,8 @@ struct bcm54210pe_private {
 
 	struct work_struct txts_work;
 	struct delayed_work fifo_read_work_delayed;
-	
+	struct work_struct perout_ws;
+
 	int hwts_tx_en;
 	int hwts_rx_en;
 	int layer;
@@ -78,8 +80,8 @@ irqreturn_t bcm54210pe_handle_interrupt(int irq, void *phy_dat);
 irqreturn_t bcm54210pe_handle_interrupt_thread(int irq, void *phy_dat);
 
 static int bcm54210pe_perout_en(struct bcm54210pe_ptp *ptp, s64 period, s64 pulsewidth, int on);
-static u16 bcm54210pe_get_base_nco6_reg(struct bcm54210pe_ptp *ptp, u16 val, bool do_nse_init);
+static u16 bcm54210pe_get_base_nco6_reg(struct bcm54210pe_private *private, u16 val, bool do_nse_init);
 static int bcm54210pe_enable_interrupts(struct phy_device *phydev, bool fsync_en, bool sop_en);
 static int bcm54210pe_gettimex(struct ptp_clock_info *info, struct timespec64 *ts, struct ptp_system_timestamp *sts);
-
-
+static int bcm54210pe_getlocaltime(struct bcm54210pe_private *private, u64 *time_stamp);
+static void bcm54210pe_run_perout_thread(struct work_struct *perout_ws);

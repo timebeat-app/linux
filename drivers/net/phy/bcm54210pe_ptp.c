@@ -34,7 +34,7 @@
 /* PTP header data offsets	*/
 #define PTP_CONTROL_OFFSET		32
 #define PTP_TSMT_OFFSET 		0
-#define PTP_SEQUENCE_ID_OFFSET	30
+#define PTP_SEQUENCE_ID_OFFSET		30
 #define PTP_CLOCK_ID_OFFSET		20
 #define PTP_CLOCK_ID_SIZE		8
 #define PTP_SEQUENCE_PORT_NUMER_OFFSET  (PTP_CLOCK_ID_OFFSET + PTP_CLOCK_ID_SIZE)
@@ -51,11 +51,11 @@
 #define EXT_1588_SLICE_REG		0x0810
 #define EXT_1588_SLICE_DATA		0x0101
 
-#define ORIGINAL_TIME_CODE_0 	0x0854
-#define ORIGINAL_TIME_CODE_1 	0x0855
-#define ORIGINAL_TIME_CODE_2 	0x0856
-#define ORIGINAL_TIME_CODE_3 	0x0857
-#define ORIGINAL_TIME_CODE_4 	0x0858
+#define ORIGINAL_TIME_CODE_0 		0x0854
+#define ORIGINAL_TIME_CODE_1 		0x0855
+#define ORIGINAL_TIME_CODE_2 		0x0856
+#define ORIGINAL_TIME_CODE_3 		0x0857
+#define ORIGINAL_TIME_CODE_4 		0x0858
 
 #define TIME_STAMP_REG_0		0x0889
 #define TIME_STAMP_REG_1		0x088A
@@ -131,6 +131,8 @@ int force_logging = 0;
 #define LOG_MATCH_INPUT 	((LOG_ENABLED & LOG_MATCH_INPUT_)  || force_logging)
 
 #define TIMESTAMP_NO_VALUE 	(0xFFFFFFFFFFFFFFFF)
+#define U48_MAX 		0xFFFFFFFFFFFF
+
 
 int time_stamp_thread_cpu = 2;
 int skb_input_thread_cpu = 1;
@@ -577,6 +579,8 @@ static int bcm54210pe_config_1588(struct phy_device *phydev)
 	int err;
 	u16 aux = 0xFFFF;
 
+	//err = 0;
+
 	err = bcm_phy_write_exp(phydev, PTP_INTERRUPT_REG, 0x3c02 );
 
 	err |=  bcm_phy_write_exp(phydev, GLOBAL_TIMESYNC_REG, 0x0001); //Enable global timesync register.
@@ -593,10 +597,6 @@ static int bcm54210pe_config_1588(struct phy_device *phydev)
 
 	//1n ts resolution
 	//err = bcm_phy_write_exp(phydev, DPLL_SELECT_REG, 0x0160);
-
-	// Heartbeat register selection. Latch 80 bit Original time coude counter into Heartbeat register
-	// (this is undocumented)
-	err = bcm_phy_write_exp(phydev, DPLL_SELECT_REG, 0x0040);
 
 	// Set global mode and trigger immediate framesync to load shaddow registers
 	err |=  bcm_phy_write_exp(phydev, NSE_DPPL_NCO_6_REG, 0xC020);
@@ -621,22 +621,25 @@ static int bcm54210pe_gettimex(struct ptp_clock_info *info,
 			       struct timespec64 *ts,
 			       struct ptp_system_timestamp *sts)
 {
-	
 
-	// Fixme: Takes too long getting scheduler warnings
 	u16 Time[5] = {0,0,0,0,0};
 	
 	struct bcm54210pe_ptp *ptp = container_of(info, struct bcm54210pe_ptp, caps);
 	struct phy_device *phydev = ptp->chosen->phydev;
 	u16 nco_6_register_value;
 	//unsigned long flags;
-	int i;
+	int i, err;
 	u64 time_stamp;
 
-	nco_6_register_value = 0x0000;
+	// Capture timestamp on next framesync
+	nco_6_register_value = 0x2000;
+
+	// Heartbeat register selection. Latch 80 bit Original time coude counter into Heartbeat register
+	// (this is undocumented)
+	err = bcm_phy_write_exp(phydev, DPLL_SELECT_REG, 0x0040);
 
 	// Amend to base register
-	nco_6_register_value = bcm54210pe_get_base_nco6_reg(ptp, nco_6_register_value, false);
+	nco_6_register_value = bcm54210pe_get_base_nco6_reg(ptp->chosen, nco_6_register_value, false);
 
 	// Set the NCO register
 	bcm_phy_write_exp(phydev, NSE_DPPL_NCO_6_REG, nco_6_register_value);
@@ -701,6 +704,81 @@ static int bcm54210pe_gettime(struct ptp_clock_info *info, struct timespec64 *ts
 	return err;
 }
 
+static int bcm54210pe_getlocaltime(struct bcm54210pe_private *private, u64 *time_stamp)
+{
+
+	///struct bcm54210pe *ptp = &bcm54210pe_ptp;
+
+
+	u16 Time[3] = { 0, 0, 0};
+
+	u16 nco_6_register_value;
+	int i, err, ts;
+
+	struct phy_device *phydev = private->phydev;
+
+	// Capture timestamp on next framesync
+	nco_6_register_value = 0x2000;
+
+	// Heartbeat register selection. Latch 48 bit Original time coude counter into Heartbeat register
+	// (this is undocumented)
+	err = bcm_phy_write_exp(phydev, DPLL_SELECT_REG, 0x0000);
+
+	// Amend to base register
+	nco_6_register_value =
+		bcm54210pe_get_base_nco6_reg(private, nco_6_register_value, false);
+
+	// Set the NCO register
+	err = bcm_phy_write_exp(phydev, NSE_DPPL_NCO_6_REG, nco_6_register_value);
+
+	// Trigger framesync
+	err |= bcm_phy_modify_exp(phydev, NSE_DPPL_NCO_6_REG, 0x003C, 0x0020);
+
+	for (i = 0; i < 5; i++) {
+
+		err |= bcm_phy_write_exp(phydev, CTR_DBG_REG, 0x400);
+		Time[2] = bcm_phy_read_exp(phydev, HEART_BEAT_REG2);
+		Time[1] = bcm_phy_read_exp(phydev, HEART_BEAT_REG1);
+		Time[0] = bcm_phy_read_exp(phydev, HEART_BEAT_REG0);
+
+		// Set read end bit
+		err |= bcm_phy_write_exp(phydev, CTR_DBG_REG, 0x800);
+		err |= bcm_phy_write_exp(phydev, CTR_DBG_REG, 0x000);
+
+
+		printk("LTS DGB (1): %hu:%hu:%hu\n", Time[2], Time[1], Time[0]);
+		ts = 0;
+		u64 ts[3];
+
+		ts[2] = (((u64)Time[2]) << 32);
+		ts[1] = (((u64)Time[1]) << 16);
+		ts[0] = ((u64)Time[0]);
+
+		u64 cumulative = 0;
+		cumulative |= ts[0];
+		//printk("Local Timestamp (0) (%d): %llu\n", i, cumulative);
+		cumulative |= ts[1];
+		//printk("Local Timestamp (1) (%d): %llu\n", i, cumulative);
+		cumulative |= ts[2];
+		//printk("Local Timestamp (2) (%d): %llu\n", i, cumulative);
+
+		printk("Local Timestamp (1) (%d): %llu\n", i, cumulative);
+
+		printk("LTS DGB (2): %llu:%llu:%llu\n", ts[2], ts[1], ts[0]);
+
+		*time_stamp = cumulative;
+
+
+		printk("Local Timestamp (2) (%d): %llu\n", i, *time_stamp);
+
+		if (*time_stamp != 0) {
+			//time_stamp = ts;
+			break;
+		}
+	}
+
+	return err;
+}
 
 static int bcm54210pe_settime(struct ptp_clock_info *info, const struct timespec64 *ts)
 {
@@ -754,6 +832,9 @@ static int bcm54210pe_settime(struct ptp_clock_info *info, const struct timespec
 
 	// Trigger framesync
 	bcm_phy_modify_exp(phydev, NSE_DPPL_NCO_6_REG, 0x003C, 0x0020);
+
+	// Set the second on set
+	ptp->chosen->second_on_set = ts->tv_sec;
 
 	return 0;
 }
@@ -883,27 +964,14 @@ static int bcm54210pe_perout_en(struct bcm54210pe_ptp *ptp, s64 period, s64 puls
 		pulsewidth_reg	 = (u16) (0x7F & (pulsewidth >> 2));	// 7 highest bit  of 8 ns pulse length [8:2]
 
 
-		// New Stuff Start
-		/*
-		struct timespec64 ts;
-		ts.tv_sec = 0;
-		ts.tv_nsec = 0;
-		//bcm54210pe_gettime(NULL, &ts);
-		pulse_start_hi = (u16) ts.tv_sec + 2;
-		bcm_phy_write_exp(phydev, NSE_DPPL_NCO_5_0_REG, frequency_lo);
-		bcm_phy_write_exp(phydev, NSE_DPPL_NCO_5_1_REG, frequency_lo);
-		bcm_phy_write_exp(phydev, NSE_DPPL_NCO_5_2_REG, frequency_hi);
-		*/
-		// New Stuff End
-
 
 		// Set enable per_out
 		ptp->chosen->per_out_en = true;
 
-		// Get base value
-		nco_6_register_value = bcm54210pe_get_base_nco6_reg(ptp, nco_6_register_value, true);
+		/* Replaced by thread
 
-		nco_6_register_value |= 0x0001; // For mode 3
+		// Get base value
+		nco_6_register_value = bcm54210pe_get_base_nco6_reg(ptp->chosen, nco_6_register_value, true);
 
 		// Write to register
 		err = bcm_phy_write_exp(phydev, NSE_DPPL_NCO_6_REG, nco_6_register_value);
@@ -918,6 +986,9 @@ static int bcm54210pe_perout_en(struct bcm54210pe_ptp *ptp, s64 period, s64 puls
 
 		// Trigger immediate framesync framesync
 		err |= bcm_phy_modify_exp(phydev, NSE_DPPL_NCO_6_REG, 0x003C, 0x0020);
+		*/
+
+		schedule_work(&ptp->chosen->perout_ws);
 
 	} else {
 
@@ -925,7 +996,7 @@ static int bcm54210pe_perout_en(struct bcm54210pe_ptp *ptp, s64 period, s64 puls
 		ptp->chosen->per_out_en = false;
 
 		// Get base value
-		nco_6_register_value = bcm54210pe_get_base_nco6_reg(ptp, nco_6_register_value, true);
+		nco_6_register_value = bcm54210pe_get_base_nco6_reg(ptp->chosen, nco_6_register_value, true);
 
 		// Write to register
 		err = bcm_phy_write_exp(phydev, NSE_DPPL_NCO_6_REG, nco_6_register_value);
@@ -933,6 +1004,64 @@ static int bcm54210pe_perout_en(struct bcm54210pe_ptp *ptp, s64 period, s64 puls
 
 	return err;
 }
+
+static void bcm54210pe_run_perout_thread(struct work_struct *perout_ws)
+{
+	struct bcm54210pe_private *private = container_of(perout_ws, struct bcm54210pe_private, perout_ws);
+
+	//struct bcm54210pe_ptp *ptp = container_of(perout_ws, struct bcm54210pe_ptp, work_struct);
+
+	u64 i, time_stamp;
+	i = 0;
+	time_stamp = 0;
+	u64 local_time_stamp, next_event, period;
+	u16 pulsewidth, nco_6_register_value;
+
+	pulsewidth = 500;
+	period = 1000000000;
+	nco_6_register_value = 0;
+
+	// Get base value
+	nco_6_register_value = bcm54210pe_get_base_nco6_reg(private, nco_6_register_value, true);
+
+	// Write to register
+	bcm_phy_write_exp(private->phydev, NSE_DPPL_NCO_6_REG, nco_6_register_value);
+
+	while(true) {
+		printk("run_perout %lli\n", i);
+
+		//bcm_phy_write_exp(private->phydev, NSE_DPPL_NCO_3_1_REG, pulsewidth << 14);
+		//bcm_phy_write_exp(private->phydev, NSE_DPPL_NCO_3_2_REG, pulsewidth >> 2);
+
+		bcm54210pe_getlocaltime(private, &local_time_stamp);
+		next_event = local_time_stamp + (period - (local_time_stamp % period));
+
+		printk("run_perout (%lli): %llu : %llu\n", i, local_time_stamp, next_event);
+
+		// Set sync out pulse interval spacing and pulse length
+		//bcm_phy_write_exp(private->phydev, NSE_DPPL_NCO_5_0_REG, next_event & 0xFFF0);
+		//bcm_phy_write_exp(private->phydev, NSE_DPPL_NCO_5_1_REG, next_event >> 16);
+		//bcm_phy_write_exp(private->phydev, NSE_DPPL_NCO_5_2_REG, next_event >> 32);
+
+		// 0 x 3B9A CA00
+		bcm_phy_write_exp(private->phydev, NSE_DPPL_NCO_5_0_REG, 0xCA00);
+		bcm_phy_write_exp(private->phydev, NSE_DPPL_NCO_5_1_REG, 0x3B9A);
+		bcm_phy_write_exp(private->phydev, NSE_DPPL_NCO_5_2_REG, 0x0000);
+
+		// On next framesync load sync out frequency
+		bcm_phy_write_exp(private->phydev, SHADOW_REG_LOAD, 0x0200);
+
+		// Trigger immediate framesync framesync
+		bcm_phy_modify_exp(private->phydev, NSE_DPPL_NCO_6_REG, 0x003C, 0x0020);
+
+
+		i++;
+
+		do_softirq();
+		mdelay(1000);
+	}
+}
+
 
 bool bcm54210pe_rxtstamp(struct mii_timestamper *mii_ts, struct sk_buff *skb, int type)
 { return match_rx_timestamp_callback(mii_ts, skb, type); }
@@ -1225,10 +1354,12 @@ int bcm54210pe_probe(struct phy_device *phydev)
 
 
 	phydev->mii_ts = &bcm54210pe->mii_ts;
-	
+
+	// Initialisation of work_structs and similar
 	INIT_WORK(&bcm54210pe->txts_work, match_tx_timestamp_thread);
 	INIT_DELAYED_WORK(&bcm54210pe->fifo_read_work_delayed, read_txrx_timestamp_thread);
-	
+	INIT_WORK(&bcm54210pe->perout_ws, bcm54210pe_run_perout_thread);
+
 	skb_queue_head_init(&bcm54210pe->tx_skb_queue);
 	
 	x = 0; y = 0;
@@ -1286,7 +1417,7 @@ error:
 	return err;
 }
 
-static u16 bcm54210pe_get_base_nco6_reg(struct bcm54210pe_ptp *ptp, u16 val, bool do_nse_init)
+static u16 bcm54210pe_get_base_nco6_reg(struct bcm54210pe_private *private, u16 val, bool do_nse_init)
 {
 
 	// Set Global mode to CPU system
@@ -1298,13 +1429,16 @@ static u16 bcm54210pe_get_base_nco6_reg(struct bcm54210pe_ptp *ptp, u16 val, boo
 	}
 
 	// TS Capture
+	/*
 	if (ptp->chosen->ts_capture) {
 		val |= 0x2000;
 	}
+	*/
 
 	// PPS out
-	if (ptp->chosen->per_out_en) {
-		val |= 0x0002;
+	if (private->per_out_en) {
+		// val |= 0x0002; // We've moved to mode 1
+		val |= 0x0001;
 	}
 
 	return val;
