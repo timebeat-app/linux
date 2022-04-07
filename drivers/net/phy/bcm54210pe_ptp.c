@@ -106,7 +106,7 @@
 
 #define PTP_INTERRUPT_REG		0x0D0C
 
-#define CTR_DBG_REG				0x088E
+#define CTR_DBG_REG			0x088E
 #define HEART_BEAT_REG4			0x08ED
 #define HEART_BEAT_REG3			0x08EC
 #define HEART_BEAT_REG2			0x0888
@@ -122,11 +122,11 @@ int force_logging = 0;
 
 #define LOG_ENABLED 		1
 
-#define LOG_INPUT_ 			1
+#define LOG_INPUT_ 		1
 #define LOG_MATCH_OUTPUT_ 	1
 #define LOG_MATCH_INPUT_ 	1
 
-#define LOG_INPUT 			((LOG_ENABLED & LOG_INPUT_) || force_logging)
+#define LOG_INPUT 		((LOG_ENABLED & LOG_INPUT_) || force_logging)
 #define LOG_MATCH_OUTPUT 	((LOG_ENABLED & LOG_MATCH_OUTPUT_) || force_logging)
 #define LOG_MATCH_INPUT 	((LOG_ENABLED & LOG_MATCH_INPUT_)  || force_logging)
 
@@ -330,8 +330,8 @@ static void read_txrx_timestamp_thread(struct work_struct *w)
 		bcm_phy_write_exp(phydev, READ_END_REG, 2);
 		bcm_phy_write_exp(phydev, READ_END_REG, 0);
 
-		msg_type 	= (u8) ((fifo_info_2 & 0xF000) >> 12); 
-        txrx 		= (u8) ((fifo_info_2 & 0x0800) >> 11); 		
+		msg_type = (u8) ((fifo_info_2 & 0xF000) >> 12);
+        	txrx = (u8) ((fifo_info_2 & 0x0800) >> 11);
 
 		char *TXRX = GET_TXRX_NAME(txrx);
 		char *MSG = GET_MESSAGE_NAME(msg_type);
@@ -1012,10 +1012,10 @@ static void bcm54210pe_run_perout_thread(struct work_struct *perout_ws)
 	u64 i, time_stamp;
 	i = 0;
 	time_stamp = 0;
-	u64 local_time_stamp, next_event, period;
+	u64 local_time_stamp, next_event, time_before_next_pulse, period;
 	u16 pulsewidth, nco_6_register_value;
 
-	pulsewidth = 500;
+	pulsewidth = 250;
 	period = 1000000000;
 	nco_6_register_value = 0;
 
@@ -1031,12 +1031,13 @@ static void bcm54210pe_run_perout_thread(struct work_struct *perout_ws)
 		bcm_phy_write_exp(private->phydev, NSE_DPPL_NCO_3_1_REG, pulsewidth << 14);
 		bcm_phy_write_exp(private->phydev, NSE_DPPL_NCO_3_2_REG, pulsewidth >> 2);
 
-		printk("run_perout (1) (%lli): %hu:%hu\n", pulsewidth << 14, pulsewidth >> 2);
+		//printk("run_perout (1) (%llu): %hu:%hu\n", pulsewidth << 14, pulsewidth >> 2);
 
 		bcm54210pe_getlocaltime(private, &local_time_stamp);
-		next_event = local_time_stamp + (period - (local_time_stamp % period));
+		time_before_next_pulse =  period - (local_time_stamp % period);
+		next_event = local_time_stamp + time_before_next_pulse;
 
-		printk("run_perout (2) (%lli): %llu : %llu\n", i, local_time_stamp, next_event);
+		printk("run_perout (2) (%llu): %llu : %llu\n", i, local_time_stamp, next_event);
 
 		// Set sync out pulse interval spacing and pulse length
 		bcm_phy_write_exp(private->phydev, NSE_DPPL_NCO_5_0_REG, next_event & 0xFFF0);
@@ -1054,6 +1055,19 @@ static void bcm54210pe_run_perout_thread(struct work_struct *perout_ws)
 		// Trigger immediate framesync framesync
 		bcm_phy_modify_exp(private->phydev, NSE_DPPL_NCO_6_REG, 0x003C, 0x0020);
 
+		/*
+		udelay(time_before_next_pulse / 1000 + 100);
+
+		bcm_phy_write_exp(private->phydev, NSE_DPPL_NCO_5_0_REG, 0xFFFF);
+		bcm_phy_write_exp(private->phydev, NSE_DPPL_NCO_5_1_REG, 0xFFFF);
+		bcm_phy_write_exp(private->phydev, NSE_DPPL_NCO_5_2_REG, 0xFFFF);
+
+		// On next framesync load sync out frequency
+		bcm_phy_write_exp(private->phydev, SHADOW_REG_LOAD, 0x0200);
+
+		// Trigger immediate framesync framesync
+		bcm_phy_modify_exp(private->phydev, NSE_DPPL_NCO_6_REG, 0x003C, 0x0020);
+		 */
 
 		i++;
 
