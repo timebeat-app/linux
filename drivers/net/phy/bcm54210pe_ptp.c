@@ -72,9 +72,9 @@
 
 #define TX_EVENT_MODE_REG		0x0811
 #define RX_EVENT_MODE_REG		0x0819
-#define TX_TSCAPTURE_ENABLE_REG	0x0821
-#define RX_TSCAPTURE_ENABLE_REG	0x0822
-#define TXRX_1588_OPTION_REG	0x0823
+#define TX_TSCAPTURE_ENABLE_REG		0x0821
+#define RX_TSCAPTURE_ENABLE_REG		0x0822
+#define TXRX_1588_OPTION_REG		0x0823
 
 #define TX_TS_OFFSET_LSB		0x0834
 #define TX_TS_OFFSET_MSB		0x0835
@@ -114,7 +114,6 @@
 #define	HEART_BEAT_REG0			0x0886
 	
 #define READ_END_REG			0x0885
-
 
 #define FIFO_READ_DELAY			100*HZ/1000 /* delay milliseconds in jiffies */
 
@@ -160,7 +159,6 @@ void print_timestamp_message(int EVENT_TYPE, int TXRX, int MESSAGE_TYPE, int SEQ
 	
 	if(ERROR != 0)
 	{ printk ("*********************************************************************************************\n"); }
-	  
 }
 	
 void print_function_message(char *FUNCTION_NAME, char *PARAM_NAME, s64 PARAM_VALUE)
@@ -177,26 +175,29 @@ void print_function_message(char *FUNCTION_NAME, char *PARAM_NAME, s64 PARAM_VAL
 	
 }
 
-static u64 ts_to_ns(u16 *ts)
+static u64 four_u16_to_ns(u16 *four_u16)
 {
-	u64 ret_val = 0;;
 	u32 nanoseconds = 0;
 	u32 seconds = 0;
 	
 	u16 *ptr = NULL;
 	
 	ptr = (u16 *)&nanoseconds;
-	*ptr = ts[0]; ptr++; *ptr = ts[1];
+	*ptr = four_u16[0]; ptr++; *ptr = four_u16[1];
 	
 	ptr = (u16 *)&seconds;
-	*ptr = ts[2]; ptr++; *ptr = ts[3];
-	
-	ret_val = ((u64)seconds * (u64)1000000000) + nanoseconds;
-			
-	//Kyle - Could Try using KTime and  ktime_set here.
-	//Kyle - KTime, timespec64 use signed types in calculations, which may be throwing off calculations somewhere else.
-	
-	return ret_val; 
+	*ptr = four_u16[2]; ptr++; *ptr = four_u16[3];
+
+	struct timespec ts;
+	ts.sec = seconds;
+	ts.nsec = nanoseconds;
+
+	return ts_to_ns(&ts);
+}
+
+static u64 ts_to_ns(struct timespec64 *ts)
+{
+	return ((u64)ts->sec * (u64)1000000000) + ts->nsec;
 }
 
 void pkt_hex_dump(struct sk_buff *skb)
@@ -338,7 +339,7 @@ static void read_txrx_timestamp_thread(struct work_struct *w)
 		
         sequence_id = fifo_info_1;
 
-		time_stamp = ts_to_ns(Time);
+		time_stamp = four_u16_to_ns(Time);
 				
 			
 		if(LOG_INPUT)
@@ -631,7 +632,6 @@ static int bcm54210pe_get80bittime(struct bcm54210pe_private *private,
 				   struct timespec64 *ts,
 				   struct ptp_system_timestamp *sts)
 {
-
 	u16 Time[5] = {0,0,0,0,0};
 	
 	struct phy_device *phydev = private->phydev;
@@ -690,7 +690,7 @@ static int bcm54210pe_get80bittime(struct bcm54210pe_private *private,
 		bcm_phy_write_exp(phydev, CTR_DBG_REG, 0x800);
 		bcm_phy_write_exp(phydev, CTR_DBG_REG, 0x000);
 
-		time_stamp = ts_to_ns(Time);
+		time_stamp = four_u16_to_ns(Time);
 		printk("Timestamp (%d): %llu\n", i, time_stamp);
 
 		if (time_stamp != 0) {
@@ -715,14 +715,10 @@ static int bcm54210pe_gettime(struct ptp_clock_info *info, struct timespec64 *ts
 
 static int bcm54210pe_get48bittime(struct bcm54210pe_private *private, u64 *time_stamp)
 {
-
-	///struct bcm54210pe *ptp = &bcm54210pe_ptp;
-
-
 	u16 Time[3] = { 0, 0, 0};
 
 	u16 nco_6_register_value;
-	int i, err, ts;
+	int i, err;
 
 	struct phy_device *phydev = private->phydev;
 
@@ -738,7 +734,7 @@ static int bcm54210pe_get48bittime(struct bcm54210pe_private *private, u64 *time
 		bcm54210pe_get_base_nco6_reg(private, nco_6_register_value, false);
 
 	// Set the NCO register
-	err = bcm_phy_write_exp(phydev, NSE_DPPL_NCO_6_REG, nco_6_register_value);
+	err |= bcm_phy_write_exp(phydev, NSE_DPPL_NCO_6_REG, nco_6_register_value);
 
 	// Trigger framesync
 	err |= bcm_phy_modify_exp(phydev, NSE_DPPL_NCO_6_REG, 0x003C, 0x0020);
@@ -754,9 +750,7 @@ static int bcm54210pe_get48bittime(struct bcm54210pe_private *private, u64 *time
 		err |= bcm_phy_write_exp(phydev, CTR_DBG_REG, 0x800);
 		err |= bcm_phy_write_exp(phydev, CTR_DBG_REG, 0x000);
 
-
 		printk("LTS DGB (1): %hu:%hu:%hu\n", Time[2], Time[1], Time[0]);
-		ts = 0;
 		u64 ts[3];
 
 		ts[2] = (((u64)Time[2]) << 32);
@@ -765,20 +759,10 @@ static int bcm54210pe_get48bittime(struct bcm54210pe_private *private, u64 *time
 
 		u64 cumulative = 0;
 		cumulative |= ts[0];
-		//printk("Local Timestamp (0) (%d): %llu\n", i, cumulative);
 		cumulative |= ts[1];
-		//printk("Local Timestamp (1) (%d): %llu\n", i, cumulative);
 		cumulative |= ts[2];
-		//printk("Local Timestamp (2) (%d): %llu\n", i, cumulative);
-
-		printk("Local Timestamp (1) (%d): %llu\n", i, cumulative);
-
-		printk("LTS DGB (2): %llu:%llu:%llu\n", ts[2], ts[1], ts[0]);
 
 		*time_stamp = cumulative;
-
-
-		printk("Local Timestamp (2) (%d): %llu\n", i, *time_stamp);
 
 		if (*time_stamp != 0) {
 			//time_stamp = ts;
@@ -932,15 +916,15 @@ finish:
 }
 
 
-static int bcm54210pe_perout_en(struct bcm54210pe_ptp *ptp, s64 period, s64 pulsewidth, int on)
+static int bcm54210pe_perout_enable(struct bcm54210pe_private *private, s64 period, s64 pulsewidth, int enable)
 {
 	int err;
 	struct phy_device *phydev;
 	u16 nco_6_register_value, frequency_hi, frequency_lo, pulsewidth_reg, pulse_start_hi, pulse_start_lo;
 
-	phydev = ptp->chosen->phydev;
+	phydev = private->phydev;
 
-	if (on) {
+	if (enable) {
 		frequency_hi = 0;
 		frequency_lo = 0;
 		pulsewidth_reg = 0;
@@ -958,8 +942,9 @@ static int bcm54210pe_perout_en(struct bcm54210pe_ptp *ptp, s64 period, s64 puls
 				pulsewidth = period / 10;
 
 				// Where the interval pulse spacing is short, ensure we set a pulse length of 8ns
-				if (pulsewidth == 0)
+				if (pulsewidth == 0) {
 					pulsewidth = 1;
+				}
 
 			} else {
 				// Otherwise set pulse with to 4us (8ns x 500 = 4us)
@@ -973,37 +958,47 @@ static int bcm54210pe_perout_en(struct bcm54210pe_ptp *ptp, s64 period, s64 puls
 		pulsewidth_reg	 = (u16) (0x7F & (pulsewidth >> 2));	// 7 highest bit  of 8 ns pulse length [8:2]
 
 		// Set enable per_out
-		ptp->chosen->per_out_en = true;
+		private->perout_en = true;
 
-		/* Replaced by thread
+		if (private->perout_mode == SYNC_OUT_MODE_1) {
 
-		// Get base value
-		nco_6_register_value = bcm54210pe_get_base_nco6_reg(ptp->chosen, nco_6_register_value, true);
+			schedule_work(&private->perout_ws);
 
-		// Write to register
-		err = bcm_phy_write_exp(phydev, NSE_DPPL_NCO_6_REG, nco_6_register_value);
+		} else if (private->perout_mode == SYNC_OUT_MODE_2) {
 
-		// Set sync out pulse interval spacing and pulse length
-		err |= bcm_phy_write_exp(phydev, NSE_DPPL_NCO_3_0_REG, frequency_lo);
-		err |= bcm_phy_write_exp(phydev, NSE_DPPL_NCO_3_1_REG, frequency_hi);
-		err |= bcm_phy_write_exp(phydev, NSE_DPPL_NCO_3_2_REG, pulsewidth_reg);
+			// Get base value
+			nco_6_register_value = bcm54210pe_get_base_nco6_reg(
+				private, nco_6_register_value, true);
 
-		// On next framesync load sync out frequency
-		err |= bcm_phy_write_exp(phydev, SHADOW_REG_LOAD, 0x0200);
+			// Write to register
+			err = bcm_phy_write_exp(phydev, NSE_DPPL_NCO_6_REG,
+						nco_6_register_value);
 
-		// Trigger immediate framesync framesync
-		err |= bcm_phy_modify_exp(phydev, NSE_DPPL_NCO_6_REG, 0x003C, 0x0020);
-		*/
+			// Set sync out pulse interval spacing and pulse length
+			err |= bcm_phy_write_exp(
+				phydev, NSE_DPPL_NCO_3_0_REG, frequency_lo);
+			err |= bcm_phy_write_exp(
+				phydev, NSE_DPPL_NCO_3_1_REG, frequency_hi);
+			err |= bcm_phy_write_exp(phydev,
+						 NSE_DPPL_NCO_3_2_REG,
+						 pulsewidth_reg);
 
-		schedule_work(&ptp->chosen->perout_ws);
+			// On next framesync load sync out frequency
+			err |= bcm_phy_write_exp(phydev, SHADOW_REG_LOAD,
+						 0x0200);
 
+			// Trigger immediate framesync framesync
+			err |= bcm_phy_modify_exp(
+				phydev, NSE_DPPL_NCO_6_REG, 0x003C, 0x0020);
+
+		}
 	} else {
 
 		// Set disable pps
-		ptp->chosen->per_out_en = false;
+		private->perout_en = false;
 
 		// Get base value
-		nco_6_register_value = bcm54210pe_get_base_nco6_reg(ptp->chosen, nco_6_register_value, false);
+		nco_6_register_value = bcm54210pe_get_base_nco6_reg(private, nco_6_register_value, false);
 
 		// Write to register
 		err = bcm_phy_write_exp(phydev, NSE_DPPL_NCO_6_REG, nco_6_register_value);
@@ -1012,16 +1007,15 @@ static int bcm54210pe_perout_en(struct bcm54210pe_ptp *ptp, s64 period, s64 puls
 	return err;
 }
 
-static void bcm54210pe_run_perout_thread(struct work_struct *perout_ws)
+static void bcm54210pe_run_perout_mode_one_thread(struct work_struct *perout_ws)
 {
 	struct bcm54210pe_private *private = container_of(perout_ws, struct bcm54210pe_private, perout_ws);
-
-	//struct bcm54210pe_ptp *ptp = container_of(perout_ws, struct bcm54210pe_ptp, work_struct);
 
 	u64 i, time_stamp;
 	i = 0;
 	time_stamp = 0;
-	u64 local_time_stamp, next_event, time_before_next_pulse, period;
+	u64 local_time_stamp_48bits, local_time_stamp_80bits;
+	u64 next_event, time_before_next_pulse, period;
 	u16 pulsewidth, nco_6_register_value;
 
 	pulsewidth = 250;
@@ -1037,16 +1031,28 @@ static void bcm54210pe_run_perout_thread(struct work_struct *perout_ws)
 	while(true) {
 		//printk("run_perout %lli\n", i);
 
+		// Set pulsewidth (test reveal this does not work)
 		bcm_phy_write_exp(private->phydev, NSE_DPPL_NCO_3_1_REG, pulsewidth << 14);
 		bcm_phy_write_exp(private->phydev, NSE_DPPL_NCO_3_2_REG, pulsewidth >> 2);
 
 		//printk("run_perout (1) (%llu): %hu:%hu\n", pulsewidth << 14, pulsewidth >> 2);
 
-		bcm54210pe_get48bittime(private, &local_time_stamp);
-		time_before_next_pulse =  period - (local_time_stamp % period);
-		next_event = local_time_stamp + time_before_next_pulse;
+		// Get 48 bit local time
+		bcm54210pe_get48bittime(private, &local_time_stamp_48bits);
 
-		printk("run_perout (2) (%llu): %llu : %llu\n", i, local_time_stamp, next_event);
+		// Get 80 bit timestamp
+		struct timespect ts;
+		bcm54210pe_get80bittime(private, &ts, NULL);
+		local_time_stamp_80bits = ts_to_ns(&ts);
+
+		printk("80 bits - 48 bits : %ull - %ull = %ull\n",
+		       local_time_stamp_80bits, local_time_stamp_48bits,
+		       local_time_stamp_80bits - local_time_stamp_48bits);
+
+		time_before_next_pulse =  period - (local_time_stamp_48bits % period);
+		next_event = local_time_stamp_48bits + time_before_next_pulse;
+
+		//printk("run_perout (2) (%llu): %llu : %llu\n", i, local_time_stamp_48bits, next_event);
 
 		// Set sync out pulse interval spacing and pulse length
 		bcm_phy_write_exp(private->phydev, NSE_DPPL_NCO_5_0_REG, next_event & 0xFFF0);
@@ -1081,7 +1087,7 @@ static void bcm54210pe_run_perout_thread(struct work_struct *perout_ws)
 		i++;
 
 		do_softirq();
-		if (!private->per_out_en) {
+		if (!private->perout_en) {
 			break;
 		}
 		mdelay(1000);
@@ -1251,7 +1257,7 @@ static int bcm54210pe_feature_enable(struct ptp_clock_info *info, struct ptp_clo
 		}
 
 
-		return bcm54210pe_perout_en(ptp, period, pulsewidth, on);
+		return bcm54210pe_perout_enable(ptp, period, pulsewidth, on);
 
 	case PTP_CLK_REQ_EXTTS:
 		if (ptp->chosen->sdp_config[SYNC_IN_PIN].func != PTP_PF_EXTTS) {
@@ -1309,7 +1315,7 @@ static const struct ptp_clock_info bcm54210pe_clk_caps = {
 	.verify		= &bcm54210pe_ptp_verify_pin,
 };
 
-static int bcm54210pe_enable_interrupts(struct phy_device *phydev, bool fsync_en, bool sop_en)
+static int bcm54210pe_interrupts_enable(struct phy_device *phydev, bool fsync_en, bool sop_en)
 {
 	u16 interrupt_mask;
 
@@ -1343,9 +1349,7 @@ static int bcm54210pe_sw_reset(struct phy_device *phydev)
 }
 
 int bcm54210pe_probe(struct phy_device *phydev)
-{	
-	//print_function_message("bcm54210pe_probe", NULL, 0);
-	
+{
 	int err = 0;
 	int x, y;
 	struct bcm54210pe_ptp *ptp;
@@ -1355,8 +1359,11 @@ int bcm54210pe_probe(struct phy_device *phydev)
 	bcm54210pe_sw_reset(phydev);
 	bcm54210pe_config_1588(phydev);
 
+	/*
 	printk("PHY_DEV INTERRUPTS: %d\n", phydev->interrupts);
 	printk("PHY_DEV IRQ: %d\n", phydev->irq);
+	*/
+
 	bcm54210pe = kzalloc(sizeof(struct bcm54210pe_private), GFP_KERNEL);
         if (!bcm54210pe) {
 		err = -ENOMEM;
@@ -1370,7 +1377,6 @@ int bcm54210pe_probe(struct phy_device *phydev)
 	}
 
 	bcm54210pe->phydev = phydev;
-
 	bcm54210pe->ptp = ptp;
 
 	bcm54210pe->mii_ts.rxtstamp = bcm54210pe_rxtstamp;
@@ -1412,7 +1418,8 @@ int bcm54210pe_probe(struct phy_device *phydev)
 	bcm54210pe->ts_capture = true;
 	bcm54210pe->one_step = false;
 	bcm54210pe->extts_en = false;
-	bcm54210pe->per_out_en = false;
+	bcm54210pe->perout_en = false;
+	bcm54210pe->perout_mode = SYNC_OUT_MODE_1;
 
 	// Pin descriptions
 	sync_in_pin_desc = &bcm54210pe->sdp_config[SYNC_IN_PIN];
