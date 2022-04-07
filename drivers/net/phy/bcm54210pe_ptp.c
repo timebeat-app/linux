@@ -622,10 +622,19 @@ static int bcm54210pe_gettimex(struct ptp_clock_info *info,
 			       struct ptp_system_timestamp *sts)
 {
 
-	u16 Time[5] = {0,0,0,0,0};
-	
 	struct bcm54210pe_ptp *ptp = container_of(info, struct bcm54210pe_ptp, caps);
 	struct phy_device *phydev = ptp->chosen->phydev;
+	return bcm54210pe_get80bittime(ptp->chosen, ts, sts);
+}
+
+static int bcm54210pe_get80bittime(struct bcm54210pe_private *private,
+				   struct timespec64 *ts,
+				   struct ptp_system_timestamp *sts)
+{
+
+	u16 Time[5] = {0,0,0,0,0};
+	
+	struct phy_device *phydev = private->phydev;
 	u16 nco_6_register_value;
 	//unsigned long flags;
 	int i, err;
@@ -639,7 +648,7 @@ static int bcm54210pe_gettimex(struct ptp_clock_info *info,
 	err = bcm_phy_write_exp(phydev, DPLL_SELECT_REG, 0x0040);
 
 	// Amend to base register
-	nco_6_register_value = bcm54210pe_get_base_nco6_reg(ptp->chosen, nco_6_register_value, false);
+	nco_6_register_value = bcm54210pe_get_base_nco6_reg(private, nco_6_register_value, false);
 
 	// Set the NCO register
 	bcm_phy_write_exp(phydev, NSE_DPPL_NCO_6_REG, nco_6_register_value);
@@ -704,7 +713,7 @@ static int bcm54210pe_gettime(struct ptp_clock_info *info, struct timespec64 *ts
 	return err;
 }
 
-static int bcm54210pe_getlocaltime(struct bcm54210pe_private *private, u64 *time_stamp)
+static int bcm54210pe_get48bittime(struct bcm54210pe_private *private, u64 *time_stamp)
 {
 
 	///struct bcm54210pe *ptp = &bcm54210pe_ptp;
@@ -1033,7 +1042,7 @@ static void bcm54210pe_run_perout_thread(struct work_struct *perout_ws)
 
 		//printk("run_perout (1) (%llu): %hu:%hu\n", pulsewidth << 14, pulsewidth >> 2);
 
-		bcm54210pe_getlocaltime(private, &local_time_stamp);
+		bcm54210pe_get48bittime(private, &local_time_stamp);
 		time_before_next_pulse =  period - (local_time_stamp % period);
 		next_event = local_time_stamp + time_before_next_pulse;
 
