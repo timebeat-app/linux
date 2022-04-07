@@ -963,8 +963,6 @@ static int bcm54210pe_perout_en(struct bcm54210pe_ptp *ptp, s64 period, s64 puls
 		frequency_hi	|= (u16) pulsewidth << 14; 		// 2 lowest bits of 8ns pulse length [1:0]
 		pulsewidth_reg	 = (u16) (0x7F & (pulsewidth >> 2));	// 7 highest bit  of 8 ns pulse length [8:2]
 
-
-
 		// Set enable per_out
 		ptp->chosen->per_out_en = true;
 
@@ -996,7 +994,7 @@ static int bcm54210pe_perout_en(struct bcm54210pe_ptp *ptp, s64 period, s64 puls
 		ptp->chosen->per_out_en = false;
 
 		// Get base value
-		nco_6_register_value = bcm54210pe_get_base_nco6_reg(ptp->chosen, nco_6_register_value, true);
+		nco_6_register_value = bcm54210pe_get_base_nco6_reg(ptp->chosen, nco_6_register_value, false);
 
 		// Write to register
 		err = bcm_phy_write_exp(phydev, NSE_DPPL_NCO_6_REG, nco_6_register_value);
@@ -1022,31 +1020,33 @@ static void bcm54210pe_run_perout_thread(struct work_struct *perout_ws)
 	nco_6_register_value = 0;
 
 	// Get base value
-	nco_6_register_value = bcm54210pe_get_base_nco6_reg(private, nco_6_register_value, true);
+	nco_6_register_value = bcm54210pe_get_base_nco6_reg(private, nco_6_register_value, false);
 
 	// Write to register
 	bcm_phy_write_exp(private->phydev, NSE_DPPL_NCO_6_REG, nco_6_register_value);
 
 	while(true) {
-		printk("run_perout %lli\n", i);
+		//printk("run_perout %lli\n", i);
 
-		//bcm_phy_write_exp(private->phydev, NSE_DPPL_NCO_3_1_REG, pulsewidth << 14);
-		//bcm_phy_write_exp(private->phydev, NSE_DPPL_NCO_3_2_REG, pulsewidth >> 2);
+		bcm_phy_write_exp(private->phydev, NSE_DPPL_NCO_3_1_REG, pulsewidth << 14);
+		bcm_phy_write_exp(private->phydev, NSE_DPPL_NCO_3_2_REG, pulsewidth >> 2);
+
+		printk("run_perout (1) (%lli): %hu:%hu\n", pulsewidth << 14, pulsewidth >> 2);
 
 		bcm54210pe_getlocaltime(private, &local_time_stamp);
 		next_event = local_time_stamp + (period - (local_time_stamp % period));
 
-		printk("run_perout (%lli): %llu : %llu\n", i, local_time_stamp, next_event);
+		printk("run_perout (2) (%lli): %llu : %llu\n", i, local_time_stamp, next_event);
 
 		// Set sync out pulse interval spacing and pulse length
-		//bcm_phy_write_exp(private->phydev, NSE_DPPL_NCO_5_0_REG, next_event & 0xFFF0);
-		//bcm_phy_write_exp(private->phydev, NSE_DPPL_NCO_5_1_REG, next_event >> 16);
-		//bcm_phy_write_exp(private->phydev, NSE_DPPL_NCO_5_2_REG, next_event >> 32);
+		bcm_phy_write_exp(private->phydev, NSE_DPPL_NCO_5_0_REG, next_event & 0xFFF0);
+		bcm_phy_write_exp(private->phydev, NSE_DPPL_NCO_5_1_REG, next_event >> 16);
+		bcm_phy_write_exp(private->phydev, NSE_DPPL_NCO_5_2_REG, next_event >> 32);
 
 		// 0 x 3B9A CA00
-		bcm_phy_write_exp(private->phydev, NSE_DPPL_NCO_5_0_REG, 0xCA00);
-		bcm_phy_write_exp(private->phydev, NSE_DPPL_NCO_5_1_REG, 0x3B9A);
-		bcm_phy_write_exp(private->phydev, NSE_DPPL_NCO_5_2_REG, 0x0000);
+		//bcm_phy_write_exp(private->phydev, NSE_DPPL_NCO_5_0_REG, 0xFFFF);
+		//bcm_phy_write_exp(private->phydev, NSE_DPPL_NCO_5_1_REG, 0xFFFF);
+		//bcm_phy_write_exp(private->phydev, NSE_DPPL_NCO_5_2_REG, 0x0000);
 
 		// On next framesync load sync out frequency
 		bcm_phy_write_exp(private->phydev, SHADOW_REG_LOAD, 0x0200);
@@ -1058,6 +1058,9 @@ static void bcm54210pe_run_perout_thread(struct work_struct *perout_ws)
 		i++;
 
 		do_softirq();
+		if (!private->per_out_en) {
+			break;
+		}
 		mdelay(1000);
 	}
 }
