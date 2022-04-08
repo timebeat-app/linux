@@ -25,7 +25,6 @@
 struct bcm54210pe_ptp {
 	struct ptp_clock_info caps;
 	struct ptp_clock *ptp_clock;
-	struct mutex clock_lock;
 	struct bcm54210pe_private *chosen;
 	struct mutex timeset_lock;
 };
@@ -62,6 +61,8 @@ struct bcm54210pe_private {
 	bool extts_en;
 	int  second_on_set;
 	int  perout_mode;
+	int  perout_period;
+	int  perout_pulsewidth;
 
 	struct sk_buff_head tx_skb_queue;
 		
@@ -70,6 +71,8 @@ struct bcm54210pe_private {
 
 	struct work_struct txts_work, perout_ws;
 	struct delayed_work fifo_read_work_delayed;
+
+	struct mutex clock_lock;
 
 	int hwts_tx_en;
 	int hwts_rx_en;
