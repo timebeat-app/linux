@@ -188,16 +188,16 @@ static u64 four_u16_to_ns(u16 *four_u16)
 	ptr = (u16 *)&seconds;
 	*ptr = four_u16[2]; ptr++; *ptr = four_u16[3];
 
-	struct timespec ts;
-	ts.sec = seconds;
-	ts.nsec = nanoseconds;
+	struct timespec64 ts;
+	ts.tv_sec = seconds;
+	ts.tv_nsec = nanoseconds;
 
 	return ts_to_ns(&ts);
 }
 
 static u64 ts_to_ns(struct timespec64 *ts)
 {
-	return ((u64)ts->sec * (u64)1000000000) + ts->nsec;
+	return ((u64)ts->tv_sec * (u64)1000000000) + ts->tv_nsec;
 }
 
 void pkt_hex_dump(struct sk_buff *skb)
@@ -606,7 +606,7 @@ static int bcm54210pe_config_1588(struct phy_device *phydev)
 	printk("DEBUG: GPIO %d IRQ %d\n", 15, gpio_to_irq(41));
 
 	// Enable Interrupt behaviour
-	err |= bcm54210pe_enable_interrupts(phydev,true, false);
+	err |= bcm54210pe_interrupts_enable(phydev,true, false);
 
 	err |= request_threaded_irq(gpio_to_irq(41), bcm54210pe_handle_interrupt, bcm54210pe_handle_interrupt_thread,
 								IRQF_ONESHOT | IRQF_SHARED,
@@ -1041,11 +1041,11 @@ static void bcm54210pe_run_perout_mode_one_thread(struct work_struct *perout_ws)
 		bcm54210pe_get48bittime(private, &local_time_stamp_48bits);
 
 		// Get 80 bit timestamp
-		struct timespect ts;
+		struct timespec64 ts;
 		bcm54210pe_get80bittime(private, &ts, NULL);
 		local_time_stamp_80bits = ts_to_ns(&ts);
 
-		printk("80 bits - 48 bits : %ull - %ull = %ull\n",
+		printk("80 bits - 48 bits : %llu - %llu = %llu\n",
 		       local_time_stamp_80bits, local_time_stamp_48bits,
 		       local_time_stamp_80bits - local_time_stamp_48bits);
 
@@ -1257,7 +1257,7 @@ static int bcm54210pe_feature_enable(struct ptp_clock_info *info, struct ptp_clo
 		}
 
 
-		return bcm54210pe_perout_enable(ptp, period, pulsewidth, on);
+		return bcm54210pe_perout_enable(ptp->chosen, period, pulsewidth, on);
 
 	case PTP_CLK_REQ_EXTTS:
 		if (ptp->chosen->sdp_config[SYNC_IN_PIN].func != PTP_PF_EXTTS) {
@@ -1390,7 +1390,7 @@ int bcm54210pe_probe(struct phy_device *phydev)
 	// Initialisation of work_structs and similar
 	INIT_WORK(&bcm54210pe->txts_work, match_tx_timestamp_thread);
 	INIT_DELAYED_WORK(&bcm54210pe->fifo_read_work_delayed, read_txrx_timestamp_thread);
-	INIT_WORK(&bcm54210pe->perout_ws, bcm54210pe_run_perout_thread);
+	INIT_WORK(&bcm54210pe->perout_ws, bcm54210pe_run_perout_mode_one_thread);
 
 	skb_queue_head_init(&bcm54210pe->tx_skb_queue);
 	
@@ -1469,7 +1469,7 @@ static u16 bcm54210pe_get_base_nco6_reg(struct bcm54210pe_private *private, u16 
 	*/
 
 	// PPS out
-	if (private->per_out_en) {
+	if (private->perout_en) {
 		// val |= 0x0002; // We've moved to mode 1
 		val |= 0x0001;
 	}
