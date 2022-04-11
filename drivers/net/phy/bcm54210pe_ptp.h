@@ -69,8 +69,8 @@ struct bcm54210pe_private {
 	struct bcm54210pe_circular_buffer_item	circular_buffer_items[CIRCULAR_BUFFER_COUNT][CIRCULAR_BUFFER_ITEM_COUNT];
 	struct list_head 						circular_buffers[CIRCULAR_BUFFER_COUNT];
 
-	struct work_struct txts_work, perout_ws;
-	struct delayed_work fifo_read_work_delayed;
+	struct work_struct txts_work;
+	struct delayed_work fifo_read_work_delayed, perout_ws;
 
 	struct mutex clock_lock;
 

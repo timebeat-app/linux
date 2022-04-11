@@ -1000,7 +1000,7 @@ static int bcm54210pe_perout_enable(struct bcm54210pe_private *private, s64 peri
 
 			private->perout_period = period;
 			private->perout_pulsewidth = 1250000;
-			schedule_work(&private->perout_ws);
+			schedule_delayed_work(&private->perout_ws, msecs_to_jiffies(1));
 
 		} else if (private->perout_mode == SYNC_OUT_MODE_2) {
 
@@ -1054,7 +1054,9 @@ static int bcm54210pe_perout_enable(struct bcm54210pe_private *private, s64 peri
 
 static void   bcm54210pe_run_perout_mode_one_thread(struct work_struct *perout_ws)
 {
-	struct bcm54210pe_private *private = container_of(perout_ws, struct bcm54210pe_private, perout_ws);
+	//struct delayed_work *dw = (struct delayed_work *)w;
+
+	struct bcm54210pe_private *private = container_of((struct delayed_work *)perout_ws, struct bcm54210pe_private, perout_ws);
 
 	u64 i, time_stamp;
 	i = 0;
@@ -1073,7 +1075,7 @@ static void   bcm54210pe_run_perout_mode_one_thread(struct work_struct *perout_w
 	// Get base value
 	//nco_6_register_value = bcm54210pe_get_base_nco6_reg(private, nco_6_register_value, false);
 
-	while(true) {
+	//while(true) {
 		//printk("run_perout %lli\n", i);
 
 		printk("run_perout NCO6: %hu\n", nco_6_register_value );
@@ -1151,10 +1153,10 @@ static void   bcm54210pe_run_perout_mode_one_thread(struct work_struct *perout_w
 
 		i++;
 
-		do_softirq();
-		if (!private->perout_en) {
-			break;
-		}
+		//do_softirq();
+		//if (!private->perout_en) {
+		//	break;
+		//}
 
 		u64 wait_two = (period / 1000000) - (2 * (period / 10000000));
 		printk("wait(2): %llu ms\n", wait_two);
@@ -1167,9 +1169,15 @@ static void   bcm54210pe_run_perout_mode_one_thread(struct work_struct *perout_w
 		//udelay(period / 2000);
 
 		// mdelay(period / 2000000 - (period / 10000000));
-		mdelay(wait_two);
+		//mdelay(wait_two);
 
-	}
+		if (private->perout_en) {
+			schedule_delayed_work(&private->perout_ws, msecs_to_jiffies(wait_two));
+		}
+
+
+
+	//}
 }
 
 
@@ -1468,7 +1476,7 @@ int bcm54210pe_probe(struct phy_device *phydev)
 	// Initialisation of work_structs and similar
 	INIT_WORK(&bcm54210pe->txts_work, match_tx_timestamp_thread);
 	INIT_DELAYED_WORK(&bcm54210pe->fifo_read_work_delayed, read_txrx_timestamp_thread);
-	INIT_WORK(&bcm54210pe->perout_ws, bcm54210pe_run_perout_mode_one_thread);
+	INIT_DELAYED_WORK(&bcm54210pe->perout_ws, bcm54210pe_run_perout_mode_one_thread);
 
 	skb_queue_head_init(&bcm54210pe->tx_skb_queue);
 	
