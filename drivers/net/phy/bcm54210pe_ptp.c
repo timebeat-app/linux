@@ -998,8 +998,8 @@ static int bcm54210pe_perout_enable(struct bcm54210pe_private *private, s64 peri
 
 		if (private->perout_mode == SYNC_OUT_MODE_1) {
 
-			//private->perout_period = period;
-			//private->perout_pulsewidth = 1250000;
+			private->perout_period = period;
+			private->perout_pulsewidth = 1250000;
 			schedule_work(&private->perout_ws);
 
 		} else if (private->perout_mode == SYNC_OUT_MODE_2) {
@@ -1063,13 +1063,15 @@ static void   bcm54210pe_run_perout_mode_one_thread(struct work_struct *perout_w
 	u64 next_event, time_before_next_pulse, period, pulsewidth;
 	u16 nco_6_register_value;
 
-	pulsewidth = 250;   // private->perout_pulsewidth * 8;
-	period     = 1000000000; // private->perout_period * 8;
+	//pulsewidth = 250; //private->perout_pulsewidth * 8;
+	//period     = 1000000000; //private->perout_period * 8;
+	pulsewidth = 250; //private->perout_pulsewidth * 8;
+	period     = private->perout_period * 8;
 
 	nco_6_register_value = 0;
 
 	// Get base value
-	nco_6_register_value = bcm54210pe_get_base_nco6_reg(private, nco_6_register_value, false);
+	//nco_6_register_value = bcm54210pe_get_base_nco6_reg(private, nco_6_register_value, false);
 
 	while(true) {
 		//printk("run_perout %lli\n", i);
@@ -1078,22 +1080,19 @@ static void   bcm54210pe_run_perout_mode_one_thread(struct work_struct *perout_w
 
 		printk("run_perout (1) (%llu): %llu:%llu\n", i, period, pulsewidth);
 
-		// Set pulsewidth (test reveal this does not work)
-		bcm_phy_write_exp(private->phydev, NSE_DPPL_NCO_3_1_REG, pulsewidth << 14);
-		bcm_phy_write_exp(private->phydev, NSE_DPPL_NCO_3_2_REG, pulsewidth >> 2);
-
 		// Get 48 bit local time
 		bcm54210pe_get48bittime(private, &local_time_stamp_48bits);
 
 		// Get 80 bit timestamp
 		struct timespec64 ts;
-		bcm54210pe_get80bittime(private, &ts, NULL);
+		//bcm54210pe_get80bittime(private, &ts, NULL);
 		local_time_stamp_80bits = ts_to_ns(&ts);
 
+		/*
 		printk("80 bits - 48 bits : %llu - %llu = %lld\n",
 		       local_time_stamp_80bits, local_time_stamp_48bits,
 		       (s64)local_time_stamp_80bits % period - (s64)local_time_stamp_48bits % period);
-
+		*/
 		time_before_next_pulse =  period - (local_time_stamp_48bits % period);
 		next_event = local_time_stamp_48bits + time_before_next_pulse;
 
@@ -1101,8 +1100,17 @@ static void   bcm54210pe_run_perout_mode_one_thread(struct work_struct *perout_w
 
 		mutex_lock(&private->clock_lock);
 
-		// Write to register
-		bcm_phy_write_exp(private->phydev, NSE_DPPL_NCO_6_REG, nco_6_register_value);
+
+		nco_6_register_value = 0xC0000;
+
+		// Reset sync out
+		//bcm_phy_write_exp(private->phydev, NSE_DPPL_NCO_6_REG, nco_6_register_value);
+
+		//bcm_phy_modify_exp(private->phydev, NSE_DPPL_NCO_6_REG, 0x003C, 0x0020);
+
+		// Set pulsewidth (test reveal this does not work)
+		bcm_phy_write_exp(private->phydev, NSE_DPPL_NCO_3_1_REG, pulsewidth << 14);
+		bcm_phy_write_exp(private->phydev, NSE_DPPL_NCO_3_2_REG, pulsewidth >> 2);
 
 		// Set sync out pulse interval spacing and pulse length
 		bcm_phy_write_exp(private->phydev, NSE_DPPL_NCO_5_0_REG, next_event & 0xFFF0);
@@ -1112,14 +1120,20 @@ static void   bcm54210pe_run_perout_mode_one_thread(struct work_struct *perout_w
 		// On next framesync load sync out frequency
 		bcm_phy_write_exp(private->phydev, SHADOW_REG_LOAD, 0x0200);
 
+		// Write to register
+		bcm_phy_write_exp(private->phydev, NSE_DPPL_NCO_6_REG, nco_6_register_value || 0x0001);
+
 		// Trigger immediate framesync framesync
 		bcm_phy_modify_exp(private->phydev, NSE_DPPL_NCO_6_REG, 0x003C, 0x0020);
 
 		mutex_unlock(&private->clock_lock);
 
-		/*
-		printk("time_before_next_pulse %llu, pulsewidth %llu\n", (time_before_next_pulse / 1000), (pulsewidth / 1000));
-		udelay((time_before_next_pulse / 1000) + (pulsewidth / 1000));
+		printk("time_before_next_pulse %llu ms, pulsewidth %llu\n", (time_before_next_pulse / 1000000), (pulsewidth * 8));
+		//udelay((time_before_next_pulse / 1000) + (pulsewidth / 1000));
+		//udelay((time_before_next_pulse / 1000) + (period / 10000));
+		u64 wait_one = (time_before_next_pulse / 1000000) + (period / 1000000 / 10);
+		printk("wait(1): %llu ms\n", wait_one);
+		mdelay(wait_one);
 
 		mutex_lock(&private->clock_lock);
 
@@ -1134,17 +1148,27 @@ static void   bcm54210pe_run_perout_mode_one_thread(struct work_struct *perout_w
 		bcm_phy_modify_exp(private->phydev, NSE_DPPL_NCO_6_REG, 0x003C, 0x0020);
 
 		mutex_unlock(&private->clock_lock);
-		*/
+
 		i++;
 
 		do_softirq();
 		if (!private->perout_en) {
 			break;
 		}
-		printk("wait period %llu\n", period / 1000 / 2);
-		//udelay(period / 1000 / 2);
-		//udelay(period / 1000);
-		mdelay(1000);
+
+		u64 wait_two = (period / 1000000) - (2 * (period / 10000000));
+		printk("wait(2): %llu ms\n", wait_two);
+
+		//printk("wait period %llu\n", period / 1000 / 2);
+
+		//int second_wait = (period / 2000) - (period / 10000);
+
+		//udelay((period / 2000) - (period / 10000));
+		//udelay(period / 2000);
+
+		// mdelay(period / 2000000 - (period / 10000000));
+		mdelay(wait_two);
+
 	}
 }
 
