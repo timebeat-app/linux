@@ -969,7 +969,7 @@ static int bcm54210pe_perout_enable(struct bcm54210pe_private *private, s64 peri
 		period /= 8;
 		pulsewidth /= 8;
 
-		// IF pulsewidth is not explicitly set with PTP_PEROUT_DUTY_CYCLE
+		// Mode 2 only: If pulsewidth is not explicitly set with PTP_PEROUT_DUTY_CYCLE
 		if (pulsewidth == 0) {
 			if (period < 2500) {
 				// At a frequency at less than 20us (2500 x 8ns) set pulse length to 1/10th of the interval pulse spacing
@@ -986,23 +986,28 @@ static int bcm54210pe_perout_enable(struct bcm54210pe_private *private, s64 peri
 			}
 		}
 
-		frequency_lo 	 = (u16)period; 			// Lowest 16 bits of 8ns interval pulse spacing [15:0]
-		frequency_hi	 = (u16) (0x3FFF & (period >> 16));	// Highest 14 bits of 8ns interval pulse spacing [29:16]
-		frequency_hi	|= (u16) pulsewidth << 14; 		// 2 lowest bits of 8ns pulse length [1:0]
-		pulsewidth_reg	 = (u16) (0x7F & (pulsewidth >> 2));	// 7 highest bit  of 8 ns pulse length [8:2]
-
-		// Set enable per_out
-		private->perout_en = true;
-		//private->perout_period = period;
-	    	//private->perout_pulsewidth = pulsewidth;
-
 		if (private->perout_mode == SYNC_OUT_MODE_1) {
 
+			// Set period
 			private->perout_period = period;
-			private->perout_pulsewidth = 1250000;
-			schedule_delayed_work(&private->perout_ws, msecs_to_jiffies(1));
+
+			if (!private->perout_en) {
+
+				// Set enable per_out
+				private->perout_en = true;
+				schedule_delayed_work(&private->perout_ws, msecs_to_jiffies(1));
+			}
 
 		} else if (private->perout_mode == SYNC_OUT_MODE_2) {
+
+			// Set enable per_out
+			private->perout_en = true;
+
+			// Calculate registers
+			frequency_lo 	 = (u16)period; 			// Lowest 16 bits of 8ns interval pulse spacing [15:0]
+			frequency_hi	 = (u16) (0x3FFF & (period >> 16));	// Highest 14 bits of 8ns interval pulse spacing [29:16]
+			frequency_hi	|= (u16) pulsewidth << 14; 		// 2 lowest bits of 8ns pulse length [1:0]
+			pulsewidth_reg	 = (u16) (0x7F & (pulsewidth >> 2));	// 7 highest bit  of 8 ns pulse length [8:2]
 
 			// Get base value
 			nco_6_register_value = bcm54210pe_get_base_nco6_reg(
@@ -1054,130 +1059,80 @@ static int bcm54210pe_perout_enable(struct bcm54210pe_private *private, s64 peri
 
 static void   bcm54210pe_run_perout_mode_one_thread(struct work_struct *perout_ws)
 {
-	//struct delayed_work *dw = (struct delayed_work *)w;
-
 	struct bcm54210pe_private *private = container_of((struct delayed_work *)perout_ws, struct bcm54210pe_private, perout_ws);
 
-	u64 i, time_stamp;
-	i = 0;
-	time_stamp = 0;
-	u64 local_time_stamp_48bits, local_time_stamp_80bits;
+	u64 local_time_stamp_48bits; //, local_time_stamp_80bits;
 	u64 next_event, time_before_next_pulse, period, pulsewidth;
-	u16 nco_6_register_value;
+	u16 nco_6_register_value, pulsewidth_nco3_hack;
+	u64 wait_one, wait_two;
 
-	//pulsewidth = 250; //private->perout_pulsewidth * 8;
-	//period     = 1000000000; //private->perout_period * 8;
-	pulsewidth = 250; //private->perout_pulsewidth * 8;
 	period     = private->perout_period * 8;
+	pulsewidth_nco3_hack = 250; // The BCM chip is broken. It does not respect this in sync out mode 1
 
 	nco_6_register_value = 0;
 
 	// Get base value
-	//nco_6_register_value = bcm54210pe_get_base_nco6_reg(private, nco_6_register_value, false);
+	nco_6_register_value = bcm54210pe_get_base_nco6_reg(private, nco_6_register_value, false);
 
-	//while(true) {
-		//printk("run_perout %lli\n", i);
+	// Get 48 bit local time
+	bcm54210pe_get48bittime(private, &local_time_stamp_48bits);
 
-		printk("run_perout NCO6: %hu\n", nco_6_register_value );
+	// Calculate time before next event and next event time
+	time_before_next_pulse =  period - (local_time_stamp_48bits % period);
+	next_event = local_time_stamp_48bits + time_before_next_pulse;
 
-		printk("run_perout (1) (%llu): %llu:%llu\n", i, period, pulsewidth);
+	// Lock
+	mutex_lock(&private->clock_lock);
 
-		// Get 48 bit local time
-		bcm54210pe_get48bittime(private, &local_time_stamp_48bits);
+	// Set pulsewidth (test reveal this does not work), but registers need content or no pulse will exist
+	bcm_phy_write_exp(private->phydev, NSE_DPPL_NCO_3_1_REG, pulsewidth_nco3_hack << 14);
+	bcm_phy_write_exp(private->phydev, NSE_DPPL_NCO_3_2_REG, pulsewidth_nco3_hack >> 2);
 
-		// Get 80 bit timestamp
-		struct timespec64 ts;
-		//bcm54210pe_get80bittime(private, &ts, NULL);
-		local_time_stamp_80bits = ts_to_ns(&ts);
+	// Set sync out pulse interval spacing and pulse length
+	bcm_phy_write_exp(private->phydev, NSE_DPPL_NCO_5_0_REG, next_event & 0xFFF0);
+	bcm_phy_write_exp(private->phydev, NSE_DPPL_NCO_5_1_REG, next_event >> 16);
+	bcm_phy_write_exp(private->phydev, NSE_DPPL_NCO_5_2_REG, next_event >> 32);
 
-		/*
-		printk("80 bits - 48 bits : %llu - %llu = %lld\n",
-		       local_time_stamp_80bits, local_time_stamp_48bits,
-		       (s64)local_time_stamp_80bits % period - (s64)local_time_stamp_48bits % period);
-		*/
-		time_before_next_pulse =  period - (local_time_stamp_48bits % period);
-		next_event = local_time_stamp_48bits + time_before_next_pulse;
+	// On next framesync load sync out frequency
+	bcm_phy_write_exp(private->phydev, SHADOW_REG_LOAD, 0x0200);
 
-		printk("run_perout (2) (%llu): %llu : %llu\n", i, local_time_stamp_48bits, next_event);
+	// Write to register with mode one set for sync out
+	bcm_phy_write_exp(private->phydev, NSE_DPPL_NCO_6_REG, nco_6_register_value || 0x0001);
 
-		mutex_lock(&private->clock_lock);
+	// Trigger immediate framesync framesync
+	bcm_phy_modify_exp(private->phydev, NSE_DPPL_NCO_6_REG, 0x003C, 0x0020);
 
+	// Unlock
+	mutex_unlock(&private->clock_lock);
 
-		nco_6_register_value = 0xC0000;
+	// Wait until 1/10 period after the next pulse
+	wait_one = (time_before_next_pulse / 1000000) + (period / 1000000 / 10);
+	mdelay(wait_one);
 
-		// Reset sync out
-		//bcm_phy_write_exp(private->phydev, NSE_DPPL_NCO_6_REG, nco_6_register_value);
+	// Lock
+	mutex_lock(&private->clock_lock);
 
-		//bcm_phy_modify_exp(private->phydev, NSE_DPPL_NCO_6_REG, 0x003C, 0x0020);
+	// Clear pulse by bumping sync_out_match to max (this pulls sync out down)
+	bcm_phy_write_exp(private->phydev, NSE_DPPL_NCO_5_0_REG, 0xFFF0);
+	bcm_phy_write_exp(private->phydev, NSE_DPPL_NCO_5_1_REG, 0xFFFF);
+	bcm_phy_write_exp(private->phydev, NSE_DPPL_NCO_5_2_REG, 0xFFFF);
 
-		// Set pulsewidth (test reveal this does not work)
-		bcm_phy_write_exp(private->phydev, NSE_DPPL_NCO_3_1_REG, pulsewidth << 14);
-		bcm_phy_write_exp(private->phydev, NSE_DPPL_NCO_3_2_REG, pulsewidth >> 2);
+	// On next framesync load sync out frequency
+	bcm_phy_write_exp(private->phydev, SHADOW_REG_LOAD, 0x0200);
 
-		// Set sync out pulse interval spacing and pulse length
-		bcm_phy_write_exp(private->phydev, NSE_DPPL_NCO_5_0_REG, next_event & 0xFFF0);
-		bcm_phy_write_exp(private->phydev, NSE_DPPL_NCO_5_1_REG, next_event >> 16);
-		bcm_phy_write_exp(private->phydev, NSE_DPPL_NCO_5_2_REG, next_event >> 32);
+	// Trigger immediate framesync framesync
+	bcm_phy_modify_exp(private->phydev, NSE_DPPL_NCO_6_REG, 0x003C, 0x0020);
 
-		// On next framesync load sync out frequency
-		bcm_phy_write_exp(private->phydev, SHADOW_REG_LOAD, 0x0200);
+	// Unlock
+	mutex_unlock(&private->clock_lock);
 
-		// Write to register
-		bcm_phy_write_exp(private->phydev, NSE_DPPL_NCO_6_REG, nco_6_register_value || 0x0001);
+	// Calculate wait before we reschedule the next pulse
+	wait_two = (period / 1000000) - (2 * (period / 10000000));
 
-		// Trigger immediate framesync framesync
-		bcm_phy_modify_exp(private->phydev, NSE_DPPL_NCO_6_REG, 0x003C, 0x0020);
-
-		mutex_unlock(&private->clock_lock);
-
-		printk("time_before_next_pulse %llu ms, pulsewidth %llu\n", (time_before_next_pulse / 1000000), (pulsewidth * 8));
-		//udelay((time_before_next_pulse / 1000) + (pulsewidth / 1000));
-		//udelay((time_before_next_pulse / 1000) + (period / 10000));
-		u64 wait_one = (time_before_next_pulse / 1000000) + (period / 1000000 / 10);
-		printk("wait(1): %llu ms\n", wait_one);
-		mdelay(wait_one);
-
-		mutex_lock(&private->clock_lock);
-
-		bcm_phy_write_exp(private->phydev, NSE_DPPL_NCO_5_0_REG, 0xFFF0);
-		bcm_phy_write_exp(private->phydev, NSE_DPPL_NCO_5_1_REG, 0xFFFF);
-		bcm_phy_write_exp(private->phydev, NSE_DPPL_NCO_5_2_REG, 0xFFFF);
-
-		// On next framesync load sync out frequency
-		bcm_phy_write_exp(private->phydev, SHADOW_REG_LOAD, 0x0200);
-
-		// Trigger immediate framesync framesync
-		bcm_phy_modify_exp(private->phydev, NSE_DPPL_NCO_6_REG, 0x003C, 0x0020);
-
-		mutex_unlock(&private->clock_lock);
-
-		i++;
-
-		//do_softirq();
-		//if (!private->perout_en) {
-		//	break;
-		//}
-
-		u64 wait_two = (period / 1000000) - (2 * (period / 10000000));
-		printk("wait(2): %llu ms\n", wait_two);
-
-		//printk("wait period %llu\n", period / 1000 / 2);
-
-		//int second_wait = (period / 2000) - (period / 10000);
-
-		//udelay((period / 2000) - (period / 10000));
-		//udelay(period / 2000);
-
-		// mdelay(period / 2000000 - (period / 10000000));
-		//mdelay(wait_two);
-
-		if (private->perout_en) {
-			schedule_delayed_work(&private->perout_ws, msecs_to_jiffies(wait_two));
-		}
-
-
-
-	//}
+	// Do we need to reschedule
+	if (private->perout_en) {
+		schedule_delayed_work(&private->perout_ws, msecs_to_jiffies(wait_two));
+	}
 }
 
 
@@ -1320,6 +1275,10 @@ static int bcm54210pe_feature_enable(struct ptp_clock_info *info, struct ptp_clo
 		}
 		// Check if a specific pulsewidth is set
 		if ((req->perout.flags & PTP_PEROUT_DUTY_CYCLE) > 0) {
+
+			if (ptp->chosen->perout_mode == SYNC_OUT_MODE_1) {
+				return -EOPNOTSUPP;
+			}
 
 			// Extract pulsewidth
 			ts.tv_sec = req->perout.on.sec;
@@ -1555,6 +1514,7 @@ static u16 bcm54210pe_get_base_nco6_reg(struct bcm54210pe_private *private, u16 
 	*/
 
 	// PPS out
+	/*
 	if (private->perout_en) {
 		if (private->perout_mode == SYNC_OUT_MODE_1) {
 			val |= 0x0001;
@@ -1563,6 +1523,7 @@ static u16 bcm54210pe_get_base_nco6_reg(struct bcm54210pe_private *private, u16 
 
 		}
 	}
+	*/
 
 	return val;
 }
