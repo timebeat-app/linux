@@ -95,19 +95,19 @@ static inline int classify_ptp_raw_local(struct sk_buff *skb)
 
 	data = ((u8 *)eth_header) + ETH_HLEN;
 
-	if(eth_header->h_proto == ntohs(ETH_P_1588) 						//Layer 2 (Automotive, 802.1AS, etc.)
+	if(eth_header->h_proto == htons(ETH_P_1588)) 						//Layer 2 (Automotive, 802.1AS, etc.)
 	{ 
 		return data[1] == 2 ? PTP_CLASS_V2_L2 : 0;
 	}
-	else if(eth_header->h_proto == ntohs(ETH_P_IP)				//IPv4
-			&& ip_header->protocol == ntohs(IPPROTO_UDP) 								//UDP
-			&& ntohs(ip_header->frag_off) & 0x1fff == 0) //No Fragment Offset
+	else if(eth_header->h_proto == htons(ETH_P_IP)
+			&& ip_header->protocol == htons(IPPROTO_UDP)
+			&& (ntohs(ip_header->frag_off) & 0x1fff) == 0) //No Fragment Offset
 			{
 		data += ((data[0] & 0x0f) * 4);
 		
-		if( ntohs(*((u16 *)&data[2])) == PTP_EV_PORT ) 				//Destination Port = PTP
+		if( ntohs(*((u16 *)&data[2])) == PTP_EV_PORT )
 		{
-			data += 8;
+			data += UDP_HLEN;
 			
 			if(data[1] == 1)
 			{ return PTP_CLASS_V1_IPV4; }
@@ -118,15 +118,15 @@ static inline int classify_ptp_raw_local(struct sk_buff *skb)
 		}
 	
 	}
-	else if( (eth_header->h_proto == ntohs(ETH_P_IPV6))) ) 				//IPv6
+	else if(eth_header->h_proto == htons(ETH_P_IPV6))
 	{
-		if((data[6] == IPPROTO_UDP)) 								//UDP
+		if((data[6] == IPPROTO_UDP))
 		{		
-			if(ntohs(*((u16 *)&data[42])) == PTP_EV_PORT) 			//Destination Port = PTP
+			if(ntohs(*((u16 *)&data[42])) == PTP_EV_PORT)
 			{					
-				if(data[48 + 1] == 1)
+				if(data[48 + 1] == (u8)PTP_CLASS_V1)
 				{ return PTP_CLASS_V1_IPV6;  }
-				else if(data[48 + 1] == 2)
+				else if(data[48 + 1] == (u8)PTP_CLASS_V2)
 				{ return PTP_CLASS_V2_IPV6;  }
 				
 				return 0;
