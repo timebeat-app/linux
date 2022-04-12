@@ -84,56 +84,45 @@ MODULE_PARM_DESC(skip_umac_reset, "Skip UMAC reset step");
 
 static inline int classify_ptp_raw_local(struct sk_buff *skb)
 {
-	//int ret_val = 0;
-	u8 *data;
+	u8 *eth_payload;
 	
-	struct ethhdr *eth_header = eth_hdr(skb);
-	struct iphdr *ip_header = ip_hdr(skb);
+	struct ethhdr *eth_header;
+	struct iphdr *ip_header;
+	struct udphdr *udp_header;
+
+	eth_header = eth_hdr(skb);
 
 	if(eth_header == NULL)
 	{ return 0; }
 
-	data = ((u8 *)eth_header) + ETH_HLEN;
+	eth_payload = ((u8 *)eth_header) + ETH_HLEN;
 
-	if(eth_header->h_proto == htons(ETH_P_1588)) 						//Layer 2 (Automotive, 802.1AS, etc.)
-	{ 
-		return data[1] == 2 ? PTP_CLASS_V2_L2 : 0;
-	}
-	else if(eth_header->h_proto == htons(ETH_P_IP)
-			&& ip_header->protocol == htons(IPPROTO_UDP)
-			&& (ntohs(ip_header->frag_off) & 0x1fff) == 0) //No Fragment Offset
-			{
-		data += ((data[0] & 0x0f) * 4);
-		
-		if( ntohs(*((u16 *)&data[2])) == PTP_EV_PORT )
-		{
-			data += UDP_HLEN;
-			
-			if(data[1] == 1)
-			{ return PTP_CLASS_V1_IPV4; }
-			else if(data[1] == 2)
-			{ return PTP_CLASS_V2_IPV4; }
-			
-			return 0;
-		}
-	
-	}
-	else if(eth_header->h_proto == htons(ETH_P_IPV6))
-	{
-		if((data[6] == IPPROTO_UDP))
-		{		
-			if(ntohs(*((u16 *)&data[42])) == PTP_EV_PORT)
-			{					
-				if(data[48 + 1] == (u8)PTP_CLASS_V1)
-				{ return PTP_CLASS_V1_IPV6;  }
-				else if(data[48 + 1] == (u8)PTP_CLASS_V2)
-				{ return PTP_CLASS_V2_IPV6;  }
-				
+	if(eth_header->h_proto == htons(ETH_P_1588)) {
+		return eth_payload[1] == 2 ? PTP_CLASS_V2_L2 : 0;
+	} else if(eth_header->h_proto == ntohs(ETH_P_IP) || eth_header->h_proto == htons(ETH_P_IPV6)) {
+
+		ip_header = ip_hdr(skb);
+
+		if (ip_header->protocol == IPPROTO_UDP && (ntohs(ip_header->frag_off) & 0x1fff) == 0) {
+
+			udp_header = udp_hdr(skb);
+
+			if (udp_header->source == htons(PTP_EV_PORT) && udp_header->dest == htons(PTP_EV_PORT)) {
+
+				eth_payload += ip_header->ihl * 4; // (IP Payload) no of 32 bit words x 4 = number ip header  length in bytes
+				eth_payload += UDP_HLEN;           // (UDP Payload)
+
+				if (eth_payload[1] == PTP_CLASS_V1) {
+					return ip_header->version == 4 ? PTP_CLASS_V1_IPV4 : PTP_CLASS_V1_IPV6;
+				} else if (eth_payload[1] == PTP_CLASS_V2) {
+					return ip_header->version == 4 ? PTP_CLASS_V2_IPV4 : PTP_CLASS_V2_IPV6;
+				}
+
 				return 0;
 			}
-	
 		}
 	}
+
 	return 0;
 }
 
