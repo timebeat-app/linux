@@ -99,7 +99,7 @@ static inline int classify_ptp_raw_local(struct sk_buff *skb)
 
 	if(eth_header->h_proto == htons(ETH_P_1588)) {
 		return eth_payload[1] == 2 ? PTP_CLASS_V2_L2 : 0;
-	} else if(eth_header->h_proto == ntohs(ETH_P_IP) || eth_header->h_proto == htons(ETH_P_IPV6)) {
+	} else if(eth_header->h_proto == htons(ETH_P_IP) || eth_header->h_proto == htons(ETH_P_IPV6)) {
 
 		ip_header = ip_hdr(skb);
 
