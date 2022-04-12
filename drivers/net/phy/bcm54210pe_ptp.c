@@ -950,6 +950,61 @@ finish:
 }
 
 
+static int bcm54210pe_extts_enable(struct bcm54210pe_private *private, int enable)
+{
+
+	int err;
+	struct phy_device *phydev;
+
+	phydev = private->phydev;
+
+	if (enable) {
+
+		if (!private->extts_en) {
+
+			// Set enable per_out
+			private->extts_en = true;
+			err = bcm_phy_write_exp(phydev, NSE_DPPL_NCO_4_REG, 0x0001);
+			schedule_delayed_work(&private->extts_ws, msecs_to_jiffies(1));
+		}
+
+	} else {
+		private->extts_en = false;
+		err = bcm_phy_write_exp(phydev, NSE_DPPL_NCO_4_REG, 0x0000);
+
+	}
+
+	return err;
+}
+
+static void bcm54210pe_run_extts_thread(struct work_struct *extts_ws)
+{
+	struct bcm54210pe_private *private;
+	struct ptp_clock_event event;
+	u64 interval;
+
+	private = container_of((struct delayed_work *)perout_ws, struct bcm54210pe_private, perout_ws);
+	interval = 10;	// in ms - long after we are gone from this earth, discussions will be had and
+	  		// songs will be sung about whether this interval is short enough....
+			// Before you complain let me say that in Timebeat.app up to ~150ms allows
+			// single digit ns servo accuracy. If your client / servo is not as cool: Do better :-)
+
+	event.type = PTP_CLOCK_EXTTS;
+
+	/*
+	 * Read from NCO_5... post events.... BobsYourUncle
+	 *        #event.timestamp = ....;
+	 */
+
+	// In parent object currently.... ZZZzzz....
+	//ptp_clock_event(private-> ->ptp_clock, &event);
+
+	// Do we need to reschedule
+	if (private->extts_en) {
+		schedule_delayed_work(&private->extts_ws, msecs_to_jiffies(interval));
+	}
+}
+
 static int bcm54210pe_perout_enable(struct bcm54210pe_private *private, s64 period, s64 pulsewidth, int enable)
 {
 	int err;
@@ -1057,16 +1112,16 @@ static int bcm54210pe_perout_enable(struct bcm54210pe_private *private, s64 peri
 	return err;
 }
 
-static void   bcm54210pe_run_perout_mode_one_thread(struct work_struct *perout_ws)
+static void bcm54210pe_run_perout_mode_one_thread(struct work_struct *perout_ws)
 {
-	struct bcm54210pe_private *private = container_of((struct delayed_work *)perout_ws, struct bcm54210pe_private, perout_ws);
-
+	struct bcm54210pe_private *private;
 	u64 local_time_stamp_48bits; //, local_time_stamp_80bits;
 	u64 next_event, time_before_next_pulse, period, pulsewidth;
 	u16 nco_6_register_value, pulsewidth_nco3_hack;
 	u64 wait_one, wait_two;
 
-	period     = private->perout_period * 8;
+	private = container_of((struct delayed_work *)perout_ws, struct bcm54210pe_private, perout_ws);
+	period = private->perout_period * 8;
 	pulsewidth_nco3_hack = 250; // The BCM chip is broken. It does not respect this in sync out mode 1
 
 	nco_6_register_value = 0;
@@ -1309,6 +1364,9 @@ static int bcm54210pe_feature_enable(struct ptp_clock_info *info, struct ptp_clo
 			return -EOPNOTSUPP;
 		}
 
+		return bcm54210pe_extts_enable(ptp->chosen, on);
+
+
 	// Not the right thing #Ooops
 	case PTP_CLK_REQ_PPS :
 		// This is what we call kpps in Timebeat - will get back to later
@@ -1436,6 +1494,7 @@ int bcm54210pe_probe(struct phy_device *phydev)
 	INIT_WORK(&bcm54210pe->txts_work, match_tx_timestamp_thread);
 	INIT_DELAYED_WORK(&bcm54210pe->fifo_read_work_delayed, read_txrx_timestamp_thread);
 	INIT_DELAYED_WORK(&bcm54210pe->perout_ws, bcm54210pe_run_perout_mode_one_thread);
+	INIT_DELAYED_WORK(&bcm54210pe->extts_ws, bcm54210pe_run_extts_thread);
 
 	skb_queue_head_init(&bcm54210pe->tx_skb_queue);
 	
