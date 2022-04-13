@@ -638,13 +638,9 @@ static int bcm54210pe_gettimex(struct ptp_clock_info *info,
 }
 
 // Must be called under clock_lock
-static void bcm54210pe_read80bittime_register(struct phy_device *phydev, u64 *time_stamp)
+static void bcm54210pe_read80bittime_register(struct phy_device *phydev, u64 *time_stamp_80, u64 *time_stamp_48)
 {
 	u16 Time[5] = {0,0,0,0,0};
-
-	// Heartbeat register selection. Latch 80 bit Original time coude counter into Heartbeat register
-	// (this is undocumented)
-	bcm_phy_write_exp(phydev, DPLL_SELECT_REG, 0x0040);
 
 	bcm_phy_write_exp(phydev, CTR_DBG_REG, 0x400);
 	Time[4] = bcm_phy_read_exp(phydev, HEART_BEAT_REG4);
@@ -657,7 +653,55 @@ static void bcm54210pe_read80bittime_register(struct phy_device *phydev, u64 *ti
 	bcm_phy_write_exp(phydev, CTR_DBG_REG, 0x800);
 	bcm_phy_write_exp(phydev, CTR_DBG_REG, 0x000);
 
-	*time_stamp = four_u16_to_ns(Time);
+	*time_stamp_80 = four_u16_to_ns(Time);
+
+	if (time_stamp_48 != NULL) {
+
+		u64 ts[3];
+
+		ts[2] = (((u64)Time[2]) << 32);
+		ts[1] = (((u64)Time[1]) << 16);
+		ts[0] = ((u64)Time[0]);
+
+		u64 cumulative = 0;
+		cumulative |= ts[0];
+		cumulative |= ts[1];
+		cumulative |= ts[2];
+
+		*time_stamp_48 = cumulative;
+	}
+}
+
+// Must be called under clock_lock
+static void bcm54210pe_read48bittime_register(struct phy_device *phydev, u64 *time_stamp)
+{
+	u16 Time[3] = {0,0,0};
+
+	// Heartbeat register selection. Latch 80 bit Original time coude counter into Heartbeat register
+	// (this is undocumented)
+	//bcm_phy_write_exp(phydev, DPLL_SELECT_REG, 0x0000);
+
+	bcm_phy_write_exp(phydev, CTR_DBG_REG, 0x400);
+	Time[2] = bcm_phy_read_exp(phydev, HEART_BEAT_REG2);
+	Time[1] = bcm_phy_read_exp(phydev, HEART_BEAT_REG1);
+	Time[0] = bcm_phy_read_exp(phydev, HEART_BEAT_REG0);
+
+	// Set read end bit
+	bcm_phy_write_exp(phydev, CTR_DBG_REG, 0x800);
+	bcm_phy_write_exp(phydev, CTR_DBG_REG, 0x000);
+
+	u64 ts[3];
+
+	ts[2] = (((u64)Time[2]) << 32);
+	ts[1] = (((u64)Time[1]) << 16);
+	ts[0] = ((u64)Time[0]);
+
+	u64 cumulative = 0;
+	cumulative |= ts[0];
+	cumulative |= ts[1];
+	cumulative |= ts[2];
+
+	*time_stamp = cumulative;
 }
 
 static int bcm54210pe_get80bittime(struct bcm54210pe_private *private,
@@ -670,7 +714,7 @@ static int bcm54210pe_get80bittime(struct bcm54210pe_private *private,
 
 	u16 nco_6_register_value;
 	int i, err;
-	u64 time_stamp, control_ts;
+	u64 time_stamp_48, time_stamp_80, control_ts;
 
 	// Capture timestamp on next framesync
 	nco_6_register_value = 0x2000;
@@ -678,13 +722,18 @@ static int bcm54210pe_get80bittime(struct bcm54210pe_private *private,
 
 	mutex_lock(&private->clock_lock);
 
+	// Heartbeat register selection. Latch 80 bit Original time coude counter into Heartbeat register
+	// (this is undocumented)
+	bcm_phy_write_exp(phydev, DPLL_SELECT_REG, 0x0040);
+
 	// We share frame sync events with extts, so we need to ensure no event has occurred as we are about to boot the registers, so....
 
 	// If extts is enabled
+	/*
 	if (private->extts_en) {
 
 		// Read what's in the 8- bit register
-		bcm54210pe_read80bittime_register(phydev, &control_ts);
+		bcm54210pe_read48bittime_register(phydev, &control_ts);
 
 		// If it matches neither the last gettime or extts timestamp
 		if (control_ts != private->last_extts_ts && control_ts != private->last_immediate_ts) {
@@ -694,7 +743,7 @@ static int bcm54210pe_get80bittime(struct bcm54210pe_private *private,
 			bcm54210_trigger_extts_event(private, control_ts);
 		}
 	}
-
+	*/
 	// Amend to base register
 	nco_6_register_value = bcm54210pe_get_base_nco6_reg(private, nco_6_register_value, false);
 
@@ -727,21 +776,27 @@ static int bcm54210pe_get80bittime(struct bcm54210pe_private *private,
 
 	for (i = 0; i < 5;i++) {
 
-		bcm54210pe_read80bittime_register(phydev, &time_stamp);
+		bcm54210pe_read80bittime_register(phydev, &time_stamp_80, &time_stamp_48);
 
-		if (time_stamp != 0) {
+		if (time_stamp_80 != 0) {
 			break;
 		}
 	}
 
-	ns_to_ts(time_stamp, ts);
-	private->last_immediate_ts = time_stamp;
+	ns_to_ts(time_stamp_80, ts);
+	printk("Committing (extts:gettime): %llu\n", time_stamp_48);
+
+	private->last_immediate_ts = time_stamp_48;
 
 	// If we are using extts
 	if(private->extts_en) {
 
+		// Heartbeat register selection. Latch 48 bit Original time coude counter into Heartbeat register
+		// (this is undocumented)
+		bcm_phy_write_exp(phydev, DPLL_SELECT_REG, 0x0000);
+
 		// Rearm framesync for sync in pin
-		nco_6_register_value = 0;
+		//nco_6_register_value = 0x2000;
 		nco_6_register_value = bcm54210pe_get_base_nco6_reg(private, nco_6_register_value, false);
 		bcm_phy_write_exp(phydev, NSE_DPPL_NCO_6_REG, nco_6_register_value);
 	}
@@ -787,6 +842,9 @@ static int bcm54210pe_get48bittime(struct bcm54210pe_private *private, u64 *time
 
 	for (i = 0; i < 5; i++) {
 
+		bcm54210pe_read48bittime_register(phydev,time_stamp);
+
+		/*
 		err |= bcm_phy_write_exp(phydev, CTR_DBG_REG, 0x400);
 		Time[2] = bcm_phy_read_exp(phydev, HEART_BEAT_REG2);
 		Time[1] = bcm_phy_read_exp(phydev, HEART_BEAT_REG1);
@@ -796,7 +854,7 @@ static int bcm54210pe_get48bittime(struct bcm54210pe_private *private, u64 *time
 		err |= bcm_phy_write_exp(phydev, CTR_DBG_REG, 0x800);
 		err |= bcm_phy_write_exp(phydev, CTR_DBG_REG, 0x000);
 
-		printk("LTS DGB (1): %hu:%hu:%hu\n", Time[2], Time[1], Time[0]);
+		//printk("LTS DGB (1): %hu:%hu:%hu\n", Time[2], Time[1], Time[0]);
 		u64 ts[3];
 
 		ts[2] = (((u64)Time[2]) << 32);
@@ -809,6 +867,7 @@ static int bcm54210pe_get48bittime(struct bcm54210pe_private *private, u64 *time
 		cumulative |= ts[2];
 
 		*time_stamp = cumulative;
+		*/
 
 		if (*time_stamp != 0) {
 			//time_stamp = ts;
@@ -1047,11 +1106,12 @@ static void bcm54210pe_run_extts_thread(struct work_struct *extts_ws)
 	//bcm_phy_write_exp(phydev, NSE_DPPL_NCO_6_REG, 0xE004);
 
 
-	bcm54210pe_read80bittime_register(phydev, &time_stamp);
+	bcm54210pe_read48bittime_register(phydev, &time_stamp);
 
 
 	if (private->last_extts_ts != time_stamp && private->last_immediate_ts != time_stamp) {
 		printk("extts triggered by extts thread\n");
+		printk("Committing (extts:trigger): %llu\n", time_stamp);
 		bcm54210_trigger_extts_event(private, time_stamp);
 	}
 
@@ -1072,6 +1132,7 @@ static void bcm54210_trigger_extts_event(struct bcm54210pe_private *private, u64
 	event.type = PTP_CLOCK_EXTTS;
 	event.timestamp = time_stamp;
 	ptp_clock_event(private->ptp->ptp_clock, &event);
+
     	private->last_extts_ts = time_stamp;
 
 	ns_to_ts(time_stamp, &ts);

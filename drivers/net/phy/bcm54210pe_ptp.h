@@ -93,7 +93,8 @@ static int bcm54210pe_interrupts_enable(struct phy_device *phydev, bool fsync_en
 static int bcm54210pe_gettimex(struct ptp_clock_info *info, struct timespec64 *ts, struct ptp_system_timestamp *sts);
 static int bcm54210pe_get80bittime(struct bcm54210pe_private *private, struct timespec64 *ts, struct ptp_system_timestamp *sts);
 static int bcm54210pe_get48bittime(struct bcm54210pe_private *private, u64 *time_stamp);
-static void bcm54210pe_read80bittime_register(struct phy_device *phydev, u64 *time_stamp);
+static void bcm54210pe_read80bittime_register(struct phy_device *phydev, u64 *time_stamp_80, u64 *time_stamp_48);
+static void bcm54210pe_read48bittime_register(struct phy_device *phydev, u64 *time_stamp);
 
 static int bcm54210pe_perout_enable(struct bcm54210pe_private *private, s64 period, s64 pulsewidth, int on);
 static void bcm54210pe_run_perout_mode_one_thread(struct work_struct *perout_ws);
