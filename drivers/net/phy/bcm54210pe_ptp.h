@@ -66,7 +66,8 @@ struct bcm54210pe_private {
 	int  perout_period;
 	int  perout_pulsewidth;
 
-	u64 last_extts_ts, last_immediate_ts;
+	u64 last_extts_ts;
+	u64 last_immediate_ts[2];
 
 
 	struct sk_buff_head tx_skb_queue;
@@ -101,7 +102,8 @@ static void bcm54210pe_run_perout_mode_one_thread(struct work_struct *perout_ws)
 
 static int bcm54210pe_extts_enable(struct bcm54210pe_private *private, int enable);
 static void bcm54210pe_run_extts_thread(struct work_struct *extts_ws);
-static void bcm54210_trigger_extts_event(struct bcm54210pe_private *private, u64 timestamp);
+static void bcm54210pe_trigger_extts_event(struct bcm54210pe_private *private, u64 timestamp);
 
 static u64 four_u16_to_ns(u16 *four_u16);
 static u64 ts_to_ns(struct timespec64 *ts);
+static u64 convert_48bit_to_80bit(u64 second_on_set, u64 ts);
