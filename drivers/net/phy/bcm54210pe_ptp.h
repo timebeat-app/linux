@@ -59,11 +59,14 @@ struct bcm54210pe_private {
 	bool one_step;
 	bool perout_en;
 	bool extts_en;
+
 	int  second_on_set;
+
 	int  perout_mode;
 	int  perout_period;
 	int  perout_pulsewidth;
 
+	u64 last_extts_ts, last_immediate_ts;
 
 
 	struct sk_buff_head tx_skb_queue;
@@ -85,17 +88,19 @@ struct bcm54210pe_private {
 irqreturn_t bcm54210pe_handle_interrupt(int irq, void *phy_dat);
 irqreturn_t bcm54210pe_handle_interrupt_thread(int irq, void *phy_dat);
 
-static int bcm54210pe_perout_enable(struct bcm54210pe_private *private, s64 period, s64 pulsewidth, int on);
-static int bcm54210pe_extts_enable(struct bcm54210pe_private *private, int enable);
-
 static u16 bcm54210pe_get_base_nco6_reg(struct bcm54210pe_private *private, u16 val, bool do_nse_init);
 static int bcm54210pe_interrupts_enable(struct phy_device *phydev, bool fsync_en, bool sop_en);
 static int bcm54210pe_gettimex(struct ptp_clock_info *info, struct timespec64 *ts, struct ptp_system_timestamp *sts);
 static int bcm54210pe_get80bittime(struct bcm54210pe_private *private, struct timespec64 *ts, struct ptp_system_timestamp *sts);
 static int bcm54210pe_get48bittime(struct bcm54210pe_private *private, u64 *time_stamp);
+static void bcm54210pe_read80bittime_register(struct phy_device *phydev, u64 *time_stamp);
 
+static int bcm54210pe_perout_enable(struct bcm54210pe_private *private, s64 period, s64 pulsewidth, int on);
 static void bcm54210pe_run_perout_mode_one_thread(struct work_struct *perout_ws);
+
+static int bcm54210pe_extts_enable(struct bcm54210pe_private *private, int enable);
 static void bcm54210pe_run_extts_thread(struct work_struct *extts_ws);
+static void bcm54210_trigger_extts_event(struct bcm54210pe_private *private, u64 timestamp);
 
 static u64 four_u16_to_ns(u16 *four_u16);
 static u64 ts_to_ns(struct timespec64 *ts);
