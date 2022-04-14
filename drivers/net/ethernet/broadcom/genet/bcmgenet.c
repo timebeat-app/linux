@@ -43,6 +43,7 @@
 
 #include "bcmgenet.h"
 
+
 /* Maximum number of hardware queues, downsized if needed */
 #define GENET_MAX_MQ_CNT	4
 
@@ -81,6 +82,42 @@ MODULE_PARM_DESC(skip_umac_reset, "Skip UMAC reset step");
 //		 and make sure they get passed to the phy driver.
 
 //Kyle - the issue with ptp_classify_raw() may be resolved with the skb->data/skb->mac fix. Should retest this.  Still need to filter specific message_types.
+
+void pkt_hex_dump(struct sk_buff *skb)
+{
+	size_t len;
+	int rowsize = 16;
+	int i, l, linelen, remaining;
+	int li = 0;
+	uint8_t *data, ch;
+
+	printk("Packet hex dump:\n");
+	data = (uint8_t *) skb_mac_header(skb);
+
+	if (skb_is_nonlinear(skb)) {
+		len = skb->data_len;
+	} else {
+		len = skb->len;
+	}
+
+	remaining = len;
+	for (i = 0; i < len; i += rowsize) {
+		printk("%06d\t", li);
+
+		linelen = min(remaining, rowsize);
+		remaining -= rowsize;
+
+		for (l = 0; l < linelen; l++) {
+			ch = data[l];
+			printk(KERN_CONT "%02X ", (uint32_t) ch);
+		}
+
+		data += linelen;
+		li += 10;
+
+		printk(KERN_CONT "\n");
+	}
+}
 
 static inline int classify_ptp_raw_local(struct sk_buff *skb)
 {
@@ -131,6 +168,13 @@ static inline void skb_tx_timestamp_local(struct sk_buff *skb)
 	if( skb->dev != NULL && skb->dev->phydev != NULL && skb->dev->phydev->mii_ts != NULL )
 	{ 
 		int type = classify_ptp_raw_local(skb);
+
+
+		printk("PTP type: %i\n", ptp_classify_raw(skb));
+		if (type != 0) {
+			pkt_hex_dump(skb);
+		}
+
 		if(type != 0)
 		{
 			struct ptp_header *hdr = ptp_parse_header(skb, type);
@@ -2213,7 +2257,7 @@ static netdev_tx_t bcmgenet_xmit(struct sk_buff *skb, struct net_device *dev)
 	GENET_CB(skb)->last_cb = tx_cb_ptr;
 	
 	//Kyle - Use local version above to avoid "classify-ing" problem in kernel.
-	skb_tx_timestamp_local(skb);
+	skb_tx_timestamp_local(skb); // Lasse
 	//skb_tx_timestamp(skb);
 
 	/* Decrement total BD count and advance our write pointer */

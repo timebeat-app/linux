@@ -107,3 +107,4 @@ static void bcm54210pe_trigger_extts_event(struct bcm54210pe_private *private, u
 static u64 four_u16_to_ns(u16 *four_u16);
 static u64 ts_to_ns(struct timespec64 *ts);
 static u64 convert_48bit_to_80bit(u64 second_on_set, u64 ts);
+//void pkt_hex_dump(struct sk_buff *skb);
