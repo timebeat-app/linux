@@ -93,6 +93,7 @@ config PTP_1588_CLOCK_INES
 	depends on PHYLIB
 	depends on PTP_1588_CLOCK
 	depends on BCM_NET_PHYLIB
+        select NET_PTP_CLASSIFY
 	help
 	  This driver adds support for using the BCM54210PE as a PTP
 	  clock. This clock is only useful if your PTP programs are
