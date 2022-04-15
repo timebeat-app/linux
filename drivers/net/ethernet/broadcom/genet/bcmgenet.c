@@ -119,6 +119,7 @@ void pkt_hex_dump(struct sk_buff *skb)
 	}
 }
 
+/*
 static inline int classify_ptp_raw_local(struct sk_buff *skb)
 {
 	u8 *eth_payload;
@@ -162,56 +163,55 @@ static inline int classify_ptp_raw_local(struct sk_buff *skb)
 
 	return 0;
 }
+*/
 
 static inline void skb_tx_timestamp_local(struct sk_buff *skb)
 {
-	if( skb->dev != NULL && skb->dev->phydev != NULL && skb->dev->phydev->mii_ts != NULL )
+	if(skb->dev != NULL &&
+	    skb->dev->phydev != NULL &&
+	    skb->dev->phydev->mii_ts != NULL)
 	{ 
-		int type = classify_ptp_raw_local(skb);
-
-
-		printk("PTP type: %i\n", ptp_classify_raw(skb));
-		if (type != 0) {
-			pkt_hex_dump(skb);
-		}
+		int type = classify_ptp_raw(skb);
 
 		if(type != 0)
 		{
+			printk("PTP type: %i\n", type);
+			pkt_hex_dump(skb);
+
 			struct ptp_header *hdr = ptp_parse_header(skb, type);
-			
-			if( (hdr->tsmt & 0x0F) < 4)
-			{
-				skb_shinfo(skb)->tx_flags |= SKBTX_IN_PROGRESS;
+
+			skb_shinfo(skb)->tx_flags |= SKBTX_IN_PROGRESS;
 		
-				struct mii_timestamper *mii_ts = skb->dev->phydev->mii_ts;
-				struct sk_buff *clone = skb_clone_sk(skb);
-				if (clone == NULL)
-				{ return; }
-				
-				//K.J. - we need to make sure that the skb->data == skb->mac pointer before we send it back
-				//		 up the error queue. Other applications like gptp use the original packet data to 
-				//		 match sent packets with their timestamps. The bcmgenet driver may do skb_push and skb_pull
-				//	 	 operations that move the data ptr away from the mac ptr.  
-				//		 Applications that call	recvmsg(socket_id, &message_header, MSG_ERRQUEUE); to retreive timestamps
-				//		 will receive a copy of what skb->data points to as a copy of the "original packet data".  But the
-				//		 "original packet data" is really what skb->mac points to. The solution is to clone the skb and set
-				//		 skb->data back to skb->mac so that the application receives the proper start of the "original packet data".
-				
-				
-				int mac_offset = skb_mac_offset(clone);
-				skb_pull(clone, mac_offset);		
-				///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-				
-				
-				mii_ts->txtstamp(mii_ts, clone, type);
+			struct mii_timestamper *mii_ts = skb->dev->phydev->mii_ts;
+			struct sk_buff *clone = skb_clone_sk(skb);
+			if (clone == NULL) {
 				return;
 			}
+				
+			//K.J. - we need to make sure that the skb->data == skb->mac pointer before we send it back
+			//		 up the error queue. Other applications like gptp use the original packet data to
+			//		 match sent packets with their timestamps. The bcmgenet driver may do skb_push and skb_pull
+			//	 	 operations that move the data ptr away from the mac ptr.
+			//		 Applications that call	recvmsg(socket_id, &message_header, MSG_ERRQUEUE); to retreive timestamps
+			//		 will receive a copy of what skb->data points to as a copy of the "original packet data".  But the
+			//		 "original packet data" is really what skb->mac points to. The solution is to clone the skb and set
+			//		 skb->data back to skb->mac so that the application receives the proper start of the "original packet data".
+				
+				
+			int mac_offset = skb_mac_offset(clone);
+			skb_pull(clone, mac_offset);
+			mii_ts->txtstamp(mii_ts, clone, type);
+			return;
 		}
 	}
 	
 	if (skb_shinfo(skb)->tx_flags & SKBTX_SW_TSTAMP)
-	{ skb_tstamp_tx(skb, NULL); }
+	{
+		skb_tstamp_tx(skb, NULL);
+	}
 }
+
+
 
 static inline void bcmgenet_writel(u32 value, void __iomem *offset)
 {
