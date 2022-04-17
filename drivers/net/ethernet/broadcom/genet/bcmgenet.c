@@ -74,41 +74,6 @@ static bool skip_umac_reset = false;
 module_param(skip_umac_reset, bool, 0444);
 MODULE_PARM_DESC(skip_umac_reset, "Skip UMAC reset step");
 
-static inline void skb_tx_timestamp_local(struct sk_buff *skb)
-{
-	if(skb->dev != NULL &&
-	    skb->dev->phydev != NULL &&
-	    skb->dev->phydev->mii_ts != NULL)
-	{
-		int mac_offset = skb_mac_offset(skb);
-		skb_pull(skb, mac_offset);
-		unsigned int type = ptp_classify_raw(skb);
-
-		if(type != 0)
-		{
-			struct ptp_header *hdr = ptp_parse_header(skb, type);
-
-			skb_shinfo(skb)->tx_flags |= SKBTX_IN_PROGRESS;
-		
-			struct mii_timestamper *mii_ts = skb->dev->phydev->mii_ts;
-			struct sk_buff *clone = skb_clone_sk(skb);
-			if (clone == NULL) {
-				return;
-			}
-
-			mii_ts->txtstamp(mii_ts, clone, type);
-			return;
-		}
-	}
-	
-	if (skb_shinfo(skb)->tx_flags & SKBTX_SW_TSTAMP)
-	{
-		skb_tstamp_tx(skb, NULL);
-	}
-}
-
-
-
 static inline void bcmgenet_writel(u32 value, void __iomem *offset)
 {
 	/* MIPS chips strapped for BE will automagically configure the
@@ -2153,10 +2118,18 @@ static netdev_tx_t bcmgenet_xmit(struct sk_buff *skb, struct net_device *dev)
 	}
 
 	GENET_CB(skb)->last_cb = tx_cb_ptr;
-	
-	//Kyle - Use local version above to avoid "classify-ing" problem in kernel.
-	skb_tx_timestamp_local(skb); // Lasse
-	//skb_tx_timestamp(skb);
+
+	// Timestamping
+	if (unlikely(skb_shinfo(skb)->tx_flags & SKBTX_HW_TSTAMP))
+	{
+		skb_shinfo(skb)->tx_flags |= SKBTX_IN_PROGRESS;
+		skb_pull(skb, skb_mac_offset(skb)); // Feels like this pull should really be part of ptp_classify_raw...
+		skb_clone_tx_timestamp(skb);
+	}
+	else if (unlikely(skb_shinfo(skb)->tx_flags & SKBTX_SW_TSTAMP))
+	{
+		skb_tstamp_tx(skb, NULL);
+	}
 
 	/* Decrement total BD count and advance our write pointer */
 	ring->free_bds -= nr_frags + 1;
