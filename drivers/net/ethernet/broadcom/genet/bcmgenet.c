@@ -2122,7 +2122,7 @@ static netdev_tx_t bcmgenet_xmit(struct sk_buff *skb, struct net_device *dev)
 	// Timestamping
 	if (unlikely(skb_shinfo(skb)->tx_flags & SKBTX_HW_TSTAMP))
 	{
-		skb_shinfo(skb)->tx_flags |= SKBTX_IN_PROGRESS;
+		//skb_shinfo(skb)->tx_flags |= SKBTX_IN_PROGRESS;
 		skb_pull(skb, skb_mac_offset(skb)); // Feels like this pull should really be part of ptp_classify_raw...
 		skb_clone_tx_timestamp(skb);
 	}

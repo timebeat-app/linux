@@ -22,24 +22,22 @@
 #define SYNC_OUT_MODE_1 1
 #define SYNC_OUT_MODE_2 2
 
+#define DIRECTION_RX 0
+#define DIRECTION_TX 1
+
 struct bcm54210pe_ptp {
 	struct ptp_clock_info caps;
 	struct ptp_clock *ptp_clock;
 	struct bcm54210pe_private *chosen;
-	struct mutex timeset_lock;
 };
 
 struct bcm54210pe_circular_buffer_item
 {
 	struct list_head list;
 	
-	u8 domain_number;
 	u8 msg_type;
 	u16 sequence_id;
-    	u16 source_clock_id[4];
-	u16 port_number;
-	u64 time_stamp;	
-	
+	u64 time_stamp;
 	int is_valid;
 };
 
@@ -78,7 +76,7 @@ struct bcm54210pe_private {
 	struct work_struct txts_work;
 	struct delayed_work fifo_read_work_delayed, perout_ws, extts_ws;
 
-	struct mutex clock_lock;
+	struct mutex clock_lock, timestamp_buffer_lock;
 
 	int hwts_tx_en;
 	int hwts_rx_en;
@@ -88,6 +86,13 @@ struct bcm54210pe_private {
 
 irqreturn_t bcm54210pe_handle_interrupt(int irq, void *phy_dat);
 irqreturn_t bcm54210pe_handle_interrupt_thread(int irq, void *phy_dat);
+
+static bool bcm54210pe_rxtstamp(struct mii_timestamper *mii_ts, struct sk_buff *skb, int type);
+static void bcm54210pe_txtstamp(struct mii_timestamper *mii_ts, struct sk_buff *skb, int type);
+static bool bcm54210pe_fetch_timestamp(u8 txrx, u8 message_type, u16 seq_id, struct bcm54210pe_private *private, u64 *timestamp);
+static void bcm54210pe_run_tx_timestamp_thread(struct work_struct *w);
+static void bcm54210pe_read_sop_time_register(struct bcm54210pe_private *private);
+
 
 static u16 bcm54210pe_get_base_nco6_reg(struct bcm54210pe_private *private, u16 val, bool do_nse_init);
 static int bcm54210pe_interrupts_enable(struct phy_device *phydev, bool fsync_en, bool sop_en);
@@ -107,4 +112,3 @@ static void bcm54210pe_trigger_extts_event(struct bcm54210pe_private *private, u
 static u64 four_u16_to_ns(u16 *four_u16);
 static u64 ts_to_ns(struct timespec64 *ts);
 static u64 convert_48bit_to_80bit(u64 second_on_set, u64 ts);
-//void pkt_hex_dump(struct sk_buff *skb);
