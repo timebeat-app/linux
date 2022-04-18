@@ -1579,7 +1579,7 @@ int bcm54210pe_probe(struct phy_device *phydev)
 	mutex_init(&bcm54210pe->timestamp_buffer_lock);
 
 	// Spinlock
-	spin_lock_init(&bcm54210pe->irq_spin_lock);
+	//spin_lock_init(&bcm54210pe->irq_spin_lock);
 
 	// Features
 	bcm54210pe->ts_capture = true;
@@ -1587,6 +1587,10 @@ int bcm54210pe_probe(struct phy_device *phydev)
 	bcm54210pe->extts_en = false;
 	bcm54210pe->perout_en = false;
 	bcm54210pe->perout_mode = SYNC_OUT_MODE_1;
+
+	// Fib #RSewoke shout-out
+	bcm54210pe->fib_sequence = {1, 1, 2, 3, 5, 8, 13, 21, 34, 55};
+	bcm54210pe->fib_factor = 1;
 
 	// Pin descriptions
 	sync_in_pin_desc = &bcm54210pe->sdp_config[SYNC_IN_PIN];
@@ -1608,8 +1612,7 @@ int bcm54210pe_probe(struct phy_device *phydev)
 	if (IS_ERR(bcm54210pe->ptp->ptp_clock)) {
                         return PTR_ERR(bcm54210pe->ptp->ptp_clock);
 	}
-	
-	
+
 	schedule_delayed_work(&bcm54210pe->fifo_read_work_delayed, usecs_to_jiffies(100));
 
 	return 0;

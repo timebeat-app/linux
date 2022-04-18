@@ -48,7 +48,7 @@ struct bcm54210pe_private {
 	struct bcm54210pe_ptp *ptp;
 	struct mii_timestamper mii_ts;
 	struct ptp_pin_desc sdp_config[2];
-	spinlock_t irq_spin_lock;
+	//spinlock_t irq_spin_lock;
 
 	int ts_tx_config;
 	int tx_rx_filter;
@@ -67,7 +67,6 @@ struct bcm54210pe_private {
 	u64 last_extts_ts;
 	u64 last_immediate_ts[2];
 
-
 	struct sk_buff_head tx_skb_queue;
 		
 	struct bcm54210pe_circular_buffer_item	circular_buffer_items[CIRCULAR_BUFFER_COUNT][CIRCULAR_BUFFER_ITEM_COUNT];
@@ -75,8 +74,10 @@ struct bcm54210pe_private {
 
 	struct work_struct txts_work;
 	struct delayed_work fifo_read_work_delayed, perout_ws, extts_ws;
-
 	struct mutex clock_lock, timestamp_buffer_lock;
+
+	int fib_sequence[10];
+	int fib_factor;
 
 	int hwts_tx_en;
 	int hwts_rx_en;
