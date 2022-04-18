@@ -227,9 +227,9 @@ static bool bcm54210pe_fetch_timestamp(u8 txrx, u8 message_type, u16 seq_id, str
 	{
 		item = list_entry(this, struct bcm54210pe_circular_buffer_item, list);
 
-		if(item->sequence_id == seq_id && item->is_valid == 1)
+		if(item->sequence_id == seq_id && item->is_valid)
 		{
-			item->is_valid = 0;
+			item->is_valid = false;
 			*timestamp = item->time_stamp;
 			mutex_unlock(&private->timestamp_buffer_lock);
 			return true;
@@ -295,25 +295,28 @@ static void bcm54210pe_read_sop_time_register(struct bcm54210pe_private *private
 		item->msg_type = msg_type;
 		item->sequence_id = sequence_id;
 		item->time_stamp = timestamp;
-		item->is_valid = 1;
+		item->is_valid = true;
 
 		list_add_tail(&item->list, &private->circular_buffers[index]);
 
+		/*
 		if (tx_or_rx == DIRECTION_TX)
 		{
 			schedule_work(&private->txts_work);
 		}
-
+		*/
 	}
 	mutex_unlock(&private->timestamp_buffer_lock);
 
 }
 
+/*
 static void read_txrx_timestamp_thread(struct work_struct *w)
 {	
 
 	struct delayed_work *dw = (struct delayed_work *)w;
 	struct bcm54210pe_private *priv = container_of(dw, struct bcm54210pe_private, fifo_read_work_delayed);	
+*/
 	//struct phy_device *phydev = priv->phydev;
 	//struct bcm54210pe_circular_buffer_item *item;
 	//u16 fifo_info_1, fifo_info_2;
@@ -323,7 +326,7 @@ static void read_txrx_timestamp_thread(struct work_struct *w)
 	//u64 time_stamp;
 	//u16 Time[4];
 
-	bcm54210pe_read_sop_time_register(priv);
+	//bcm54210pe_read_sop_time_register(priv);
 	/*
 	while(bcm_phy_read_exp(phydev, INTERRUPT_STATUS_REG) & 2)
 	{
@@ -383,78 +386,77 @@ static void read_txrx_timestamp_thread(struct work_struct *w)
 	}
 	*/
 
-	schedule_delayed_work(&priv->fifo_read_work_delayed, usecs_to_jiffies(POLL_INTERVAL_USECS));
+	//schedule_delayed_work(&priv->fifo_read_work_delayed, usecs_to_jiffies(POLL_INTERVAL_USECS));
 	
 	/*
 	int err = request_threaded_irq(gpio_to_irq(41), bcm54210pe_handle_interrupt, bcm54210pe_handle_interrupt_thread,
 								IRQF_ONESHOT | IRQF_SHARED,
 								phydev_name(phydev), phydev);
 	*/
-								
+
+/*
 	return; 
 }
+*/
 
 static void bcm54210pe_run_tx_timestamp_thread(struct work_struct *w)
 {
-	struct bcm54210pe_private *priv = container_of(w, struct bcm54210pe_private, txts_work);
-	
+	struct bcm54210pe_private *private =
+		container_of(w, struct bcm54210pe_private, txts_work);
+
 	struct skb_shared_hwtstamps *shhwtstamps;
 	struct sk_buff *skb;
-	struct bcm54210pe_circular_buffer_item *item; 
+	struct bcm54210pe_circular_buffer_item *item;
 	struct list_head *this, *next;
 	struct bcm54210_skb_info *skb_info;
 
 	struct ptp_header *hdr;
 	u8 msg_type;
-	u16 sequence_id;		
+	u16 sequence_id;
+	int x;
 
-	skb = skb_dequeue(&priv->tx_skb_queue);
+	skb = skb_dequeue(&private->tx_skb_queue);
+
+	// If on first stab we've got no work, then just return
+	//if (skb == NULL) {
+	//	return;
+	//}
 
 	u64 timestamp = 0;
-	
-	while(skb != NULL)
-	{
-		//Kyle - may need to timestamp packets with TIMESTAMP_NO_VALUE if no match found.
-		
+
+	while (skb != NULL) {
 		int type = ptp_classify_raw(skb);
 		hdr = ptp_parse_header(skb, type);
-		
-		if (!hdr)
-		{ return; }	
-			
-		msg_type = ptp_get_msgtype(hdr, type);
-		sequence_id = be16_to_cpu(hdr->sequence_id);
-		
-		char *TXRX = GET_TXRX_NAME(1);
-		char *MSG = GET_MESSAGE_NAME(msg_type);
-		
-		//Kyle - we may need to check multiple times like in input.
-		if (!bcm54210pe_fetch_timestamp(1, msg_type, sequence_id, priv, &timestamp)) {
-			goto dequeue;
+
+		if (!hdr) {
+			return;
 		}
 
+		msg_type = ptp_get_msgtype(hdr, type);
+		sequence_id = be16_to_cpu(hdr->sequence_id);
+
+		for (x = 0; x < 10; x++) {
+			bcm54210pe_read_sop_time_register(private);
+			if (bcm54210pe_fetch_timestamp(1, msg_type, sequence_id,
+						       priv, &timestamp)) {
+				break;
+			}
+			udelay(private->fib_sequence[x] * private->fib_factor_tx);
+		}
 		shhwtstamps = skb_hwtstamps(skb);
-		
+
 		if (!shhwtstamps) {
 			goto dequeue;
 		}
 
-		int status = 0;
 		memset(shhwtstamps, 0, sizeof(*shhwtstamps));
 		shhwtstamps->hwtstamp = ns_to_ktime(timestamp);
 
-		//Kyle - check if skb_tstamp_tx is still the right function to use, documentation suggests other, but real drivers use skb_tstamp_tx
-		//skb_tstamp_tx(skb, shhwtstamps);
 		skb_complete_tx_timestamp(skb, shhwtstamps);
-
-		//K.J. - consume_skb release the reference to the clone created in bcmgenet
-		//consume_skb(skb);
 
 	dequeue:
 		skb = skb_dequeue(&priv->tx_skb_queue);
 	}
-
-	return; 
 }
 
 irqreturn_t bcm54210pe_handle_interrupt_thread(int irq, void * phy_dat)
@@ -1250,11 +1252,13 @@ bool bcm54210pe_rxtstamp(struct mii_timestamper *mii_ts, struct sk_buff *skb, in
 	// Asynchronious approach - working, but poor approach
 	for(x = 0; x < 10; x++)
 	{
+		bcm54210pe_read_sop_time_register(private);
 		if (bcm54210pe_fetch_timestamp(0, msg_type, sequence_id, private, &timestamp)) {
+			printk("rx ts found on iteration %d\n", x);
 			break;
 		}
 
-		mdelay(1);
+		udelay(private->fib_sequence[x] * private->fib_factor_rx);
 	}
 
 	shhwtstamps = skb_hwtstamps(skb);
@@ -1279,6 +1283,7 @@ void bcm54210pe_txtstamp(struct mii_timestamper *mii_ts, struct sk_buff *skb, in
 		{	
 			skb_shinfo(skb)->tx_flags |= SKBTX_IN_PROGRESS;
 			skb_queue_tail(&device->tx_skb_queue, skb);
+			schedule_work(&private->txts_work);
 			break;
 		}
 		case HWTSTAMP_TX_OFF:
@@ -1556,7 +1561,7 @@ int bcm54210pe_probe(struct phy_device *phydev)
 
 	// Initialisation of work_structs and similar
 	INIT_WORK(&bcm54210pe->txts_work, bcm54210pe_run_tx_timestamp_thread);
-	INIT_DELAYED_WORK(&bcm54210pe->fifo_read_work_delayed, read_txrx_timestamp_thread);
+	//INIT_DELAYED_WORK(&bcm54210pe->fifo_read_work_delayed, read_txrx_timestamp_thread);
 	INIT_DELAYED_WORK(&bcm54210pe->perout_ws, bcm54210pe_run_perout_mode_one_thread);
 	INIT_DELAYED_WORK(&bcm54210pe->extts_ws, bcm54210pe_run_extts_thread);
 
@@ -1588,9 +1593,10 @@ int bcm54210pe_probe(struct phy_device *phydev)
 	bcm54210pe->perout_en = false;
 	bcm54210pe->perout_mode = SYNC_OUT_MODE_1;
 
-	// Fib #RSewoke shout-out
+	// Fibonacci RSewoke style progressive backoff scheme
 	bcm54210pe->fib_sequence = {1, 1, 2, 3, 5, 8, 13, 21, 34, 55};
-	bcm54210pe->fib_factor = 1;
+	bcm54210pe->fib_factor_rx = 10;
+	bcm54210pe->fib_factor_tx = 10;
 
 	// Pin descriptions
 	sync_in_pin_desc = &bcm54210pe->sdp_config[SYNC_IN_PIN];
@@ -1613,7 +1619,7 @@ int bcm54210pe_probe(struct phy_device *phydev)
                         return PTR_ERR(bcm54210pe->ptp->ptp_clock);
 	}
 
-	schedule_delayed_work(&bcm54210pe->fifo_read_work_delayed, usecs_to_jiffies(100));
+	//schedule_delayed_work(&bcm54210pe->fifo_read_work_delayed, usecs_to_jiffies(100));
 
 	return 0;
 }

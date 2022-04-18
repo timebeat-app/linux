@@ -38,7 +38,7 @@ struct bcm54210pe_circular_buffer_item
 	u8 msg_type;
 	u16 sequence_id;
 	u64 time_stamp;
-	int is_valid;
+	bool is_valid;
 };
 
 
@@ -77,7 +77,8 @@ struct bcm54210pe_private {
 	struct mutex clock_lock, timestamp_buffer_lock;
 
 	int fib_sequence[10];
-	int fib_factor;
+	int fib_factor_rx;
+	int fib_factor_tx;
 
 	int hwts_tx_en;
 	int hwts_rx_en;
