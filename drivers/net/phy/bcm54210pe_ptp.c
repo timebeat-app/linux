@@ -118,65 +118,13 @@
 	
 #define READ_END_REG			0x0885
 
-#define FIFO_READ_DELAY			100*HZ/1000 /* delay milliseconds in jiffies */
-
-int force_logging = 0;
-
-#define LOG_ENABLED 		1
-
-#define LOG_INPUT_ 		1
-#define LOG_MATCH_OUTPUT_ 	1
-#define LOG_MATCH_INPUT_ 	1
-
-#define LOG_INPUT 		((LOG_ENABLED & LOG_INPUT_) || force_logging)
-#define LOG_MATCH_OUTPUT 	((LOG_ENABLED & LOG_MATCH_OUTPUT_) || force_logging)
-#define LOG_MATCH_INPUT 	((LOG_ENABLED & LOG_MATCH_INPUT_)  || force_logging)
-
-#define TIMESTAMP_NO_VALUE 	(0xFFFFFFFFFFFFFFFF)
 #define U48_MAX 		0xFFFFFFFFFFFF
 
-#define GET_TXRX_NAME(TXRX) TXRX==0 ? "RX" : "TX"
-
-char *message_name_unknown = "UNKNOWN";
-char *message_names[] = {"SYNC(0)         ", "PD_REQUEST(1)   ", "PD_REQUEST(2)   ", "PD_RESPONSE(3)  "};
-#define GET_MESSAGE_NAME(MESSAGE_TYPE) (MESSAGE_TYPE < 0 || MESSAGE_TYPE >= sizeof(message_names) ) ? message_name_unknown : message_names[MESSAGE_TYPE]
-
-char *event_name_unknown = "UNKNOWN";
-char *event_names[] = {"TIMESTAMP_INPUT ", "TIMESTAMP_MATCH "};
-#define GET_EVENT_NAME(EVENT_TYPE) (EVENT_TYPE < 0 || EVENT_TYPE >= sizeof(event_names) ) ? event_name_unknown : event_names[EVENT_TYPE]
-
 #define POLL_INTERVAL_USECS (100)
-
-void print_timestamp_message(int EVENT_TYPE, int TXRX, int MESSAGE_TYPE, int SEQUENCE_ID, int STATUS, uint64_t TIMESTAMP, int ERROR)
-{	
-	if(ERROR != 0)
-	{ printk ("******** TIMESTAMP ERROR ********************************************************************\n"); }	
-
-	printk("%s - %s - Type = %s - Seq_Id = %5d - status = %d - Timestamp = %llu\n",
-			GET_EVENT_NAME(EVENT_TYPE), GET_TXRX_NAME(TXRX), GET_MESSAGE_NAME(MESSAGE_TYPE), SEQUENCE_ID, STATUS, TIMESTAMP);
-	
-	if(ERROR != 0)
-	{ printk ("*********************************************************************************************\n"); }
-}
-	
-void print_function_message(char *FUNCTION_NAME, char *PARAM_NAME, s64 PARAM_VALUE)
-{
-	if(FUNCTION_NAME == NULL)
-	{ return; }
-
-	printk ("_____________________________________________________________________________________________\n");
-	if(PARAM_NAME == NULL)
-	{ printk ("%s\n", FUNCTION_NAME); }
-	else
-	{ printk ("%s - %s = %lld\n",FUNCTION_NAME, PARAM_NAME, PARAM_VALUE); }
-	printk ("_____________________________________________________________________________________________\n");
-	
-}
 
 static u64 convert_48bit_to_80bit(u64 second_on_set, u64 ts) {
 	return (second_on_set * 1000000000) + ts;
 }
-
 
 static u64 four_u16_to_ns(u16 *four_u16)
 {
@@ -521,8 +469,6 @@ irqreturn_t bcm54210pe_handle_interrupt(int irq, void * phy_dat)
 
 static int bcm54210pe_config_1588(struct phy_device *phydev)
 {
-	print_function_message("bcm54210pe_config_1588", NULL, 0);
-	
 	int err;
 	u16 aux = 0xFFFF;
 
@@ -697,16 +643,6 @@ static int bcm54210pe_get80bittime(struct bcm54210pe_private *private,
 		bcm_phy_modify_exp(phydev, NSE_DPPL_NCO_6_REG, 0x003C, 0x0020);
 		ptp_read_system_postts(sts);
 
-		/*
-		//Can't lock. unimac_mdio_write relies on bcmgenet_mii_wait. Can't sleep on spin lock. #ZZZzzz
-		phy_lock_mdio_bus(phydev);
-		spin_lock_irqsave(&ptp->chosen->irq_spin_lock, flags);
-		ptp_read_system_prets(sts);
-		__bcm_phy_modify_exp(phydev, NSE_DPPL_NCO_6_REG, 0x003C, 0x0020);
-		ptp_read_system_postts(sts);
-		spin_unlock_irqrestore(&ptp->chosen->irq_spin_lock, flags);
-		phy_unlock_mdio_bus(phydev);
-		*/
 	} else {
 
 		// or if we are doing a gettime call
@@ -1582,9 +1518,6 @@ int bcm54210pe_probe(struct phy_device *phydev)
 	// Mutex
 	mutex_init(&bcm54210pe->clock_lock);
 	mutex_init(&bcm54210pe->timestamp_buffer_lock);
-
-	// Spinlock
-	//spin_lock_init(&bcm54210pe->irq_spin_lock);
 
 	// Features
 	bcm54210pe->ts_capture = true;

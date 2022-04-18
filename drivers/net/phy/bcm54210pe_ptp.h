@@ -48,7 +48,6 @@ struct bcm54210pe_private {
 	struct bcm54210pe_ptp *ptp;
 	struct mii_timestamper mii_ts;
 	struct ptp_pin_desc sdp_config[2];
-	//spinlock_t irq_spin_lock;
 
 	int ts_tx_config;
 	int tx_rx_filter;
