@@ -128,18 +128,21 @@ static u64 convert_48bit_to_80bit(u64 second_on_set, u64 ts) {
 
 static u64 four_u16_to_ns(u16 *four_u16)
 {
-	u32 nanoseconds = 0;
-	u32 seconds = 0;
-	
-	u16 *ptr = NULL;
-	
+	u32 seconds;
+	u32 nanoseconds;
+	struct timespec64 ts;
+	u16 *ptr;
+
+	nanoseconds = 0;
+	seconds = 0;
+
+
 	ptr = (u16 *)&nanoseconds;
 	*ptr = four_u16[0]; ptr++; *ptr = four_u16[1];
 	
 	ptr = (u16 *)&seconds;
 	*ptr = four_u16[2]; ptr++; *ptr = four_u16[3];
 
-	struct timespec64 ts;
 	ts.tv_sec = seconds;
 	ts.tv_nsec = nanoseconds;
 
@@ -169,8 +172,6 @@ static bool bcm54210pe_fetch_timestamp(u8 txrx, u8 message_type, u16 seq_id, str
 		return false;
 	}
 
-	mutex_lock(&private->timestamp_buffer_lock);
-
 	list_for_each_safe(this, next, &private->circular_buffers[index])
 	{
 		item = list_entry(this, struct bcm54210pe_circular_buffer_item, list);
@@ -184,7 +185,6 @@ static bool bcm54210pe_fetch_timestamp(u8 txrx, u8 message_type, u16 seq_id, str
 		}
 	}
 
-	mutex_unlock(&private->timestamp_buffer_lock);
 	return false;
 }
 
@@ -193,8 +193,7 @@ static void bcm54210pe_read_sop_time_register(struct bcm54210pe_private *private
 	struct phy_device *phydev = private->phydev;
 	struct bcm54210pe_circular_buffer_item *item;
 	u16 fifo_info_1, fifo_info_2;
-	u8 tx_or_rx;
-	u8 msg_type;
+	u8 tx_or_rx, msg_type, index;
 	u16 sequence_id;
 	u64 timestamp;
 	u16 Time[4];
@@ -227,7 +226,7 @@ static void bcm54210pe_read_sop_time_register(struct bcm54210pe_private *private
 
 		timestamp = four_u16_to_ns(Time);
 
-		u8 index = (tx_or_rx * 4) + msg_type;
+		index = (tx_or_rx * 4) + msg_type;
 
 		if(index < CIRCULAR_BUFFER_COUNT)
 		{
@@ -246,131 +245,87 @@ static void bcm54210pe_read_sop_time_register(struct bcm54210pe_private *private
 		item->is_valid = true;
 
 		list_add_tail(&item->list, &private->circular_buffers[index]);
-
-		/*
-		if (tx_or_rx == DIRECTION_TX)
-		{
-			schedule_work(&private->txts_work);
-		}
-		*/
 	}
 	mutex_unlock(&private->timestamp_buffer_lock);
 
 }
 
-/*
-static void read_txrx_timestamp_thread(struct work_struct *w)
-{	
+static void bcm54210pe_run_rx_timestamp_match_thread(struct work_struct *w)
+{
+	struct bcm54210pe_private *private =
+		container_of(w, struct bcm54210pe_private, rxts_work);
 
-	struct delayed_work *dw = (struct delayed_work *)w;
-	struct bcm54210pe_private *priv = container_of(dw, struct bcm54210pe_private, fifo_read_work_delayed);	
-*/
-	//struct phy_device *phydev = priv->phydev;
-	//struct bcm54210pe_circular_buffer_item *item;
-	//u16 fifo_info_1, fifo_info_2;
-	//u8 txrx;
-	//u8 msg_type;
-	//u16 sequence_id;
-	//u64 time_stamp;
-	//u16 Time[4];
+	struct skb_shared_hwtstamps *shhwtstamps;
+	struct ptp_header *hdr;
+	struct sk_buff *skb;
 
-	//bcm54210pe_read_sop_time_register(priv);
-	/*
-	while(bcm_phy_read_exp(phydev, INTERRUPT_STATUS_REG) & 2)
-	{
-		mutex_lock(&priv->clock_lock);
-		
-		// Flush out the FIFO
-		bcm_phy_write_exp(phydev, READ_END_REG, 1);
+	u8 msg_type;
+	u16 sequence_id;
+	u64 timestamp;
+	int x, type;
 
-		Time[3] = bcm_phy_read_exp(phydev, TIME_STAMP_REG_3);
-		Time[2] = bcm_phy_read_exp(phydev, TIME_STAMP_REG_2);
-		Time[1] = bcm_phy_read_exp(phydev, TIME_STAMP_REG_1);
-		Time[0] = bcm_phy_read_exp(phydev, TIME_STAMP_REG_0);
+	skb = skb_dequeue(&private->rx_skb_queue);
 
-		fifo_info_1 = bcm_phy_read_exp(phydev, TIME_STAMP_INFO_1);
-		fifo_info_2 = bcm_phy_read_exp(phydev, TIME_STAMP_INFO_2);
+	while (skb != NULL) {
 
-		bcm_phy_write_exp(phydev, READ_END_REG, 2);
-		bcm_phy_write_exp(phydev, READ_END_REG, 0);
+		// Yes....  skb_defer_rx_timestamp just did this but <ZZZzzz>....
+		skb_push(skb, ETH_HLEN);
+		type = ptp_classify_raw(skb);
+		skb_pull(skb, ETH_HLEN);
 
-		mutex_unlock(&priv->clock_lock);
+		hdr = ptp_parse_header(skb, type);
 
-		msg_type = (u8) ((fifo_info_2 & 0xF000) >> 12);
-        	txrx = (u8) ((fifo_info_2 & 0x0800) >> 11);
-
-		char *TXRX = GET_TXRX_NAME(txrx);
-		char *MSG = GET_MESSAGE_NAME(msg_type);
-		
-		sequence_id = fifo_info_1;
-
-		time_stamp = four_u16_to_ns(Time);
-				
-
-		if(LOG_INPUT)
-		{ print_timestamp_message(0, txrx, msg_type, sequence_id, 0, time_stamp, 0); }
-		
-		u8 index = (txrx * 4) + msg_type;
-	
-		if(index < CIRCULAR_BUFFER_COUNT)
-		{ item = list_first_entry_or_null(&priv->circular_buffers[index], struct bcm54210pe_circular_buffer_item, list); }
-		else
-		{ printk("NEW TIMESTAMP - Error 1\n"); }
-	
-		if(item != NULL)
-		{
-			list_del_init(&item->list);
-			
-			item->msg_type = msg_type; 
-			item->sequence_id = sequence_id;
-			item->time_stamp = time_stamp;
-			item->is_valid = 1;
-			
-			list_add_tail(&item->list, &priv->circular_buffers[index]);
-			
-			if (txrx) 
-			{ schedule_work_on(time_stamp_thread_cpu, &priv->txts_work);}			
+		if (hdr == NULL) {
+			goto dequeue;
 		}
+
+		msg_type = ptp_get_msgtype(hdr, type);
+		sequence_id = be16_to_cpu(hdr->sequence_id);
+
+		timestamp = 0;
+
+		for (x = 0; x < 10; x++) {
+			bcm54210pe_read_sop_time_register(private);
+			if (bcm54210pe_fetch_timestamp(0, msg_type, sequence_id,
+						       private, &timestamp)) {
+				break;
+			}
+
+			udelay(private->fib_sequence[x] *
+			       private->fib_factor_rx);
+		}
+
+		shhwtstamps = skb_hwtstamps(skb);
+
+		if (!shhwtstamps) {
+			goto dequeue;
+		}
+
+		memset(shhwtstamps, 0, sizeof(*shhwtstamps));
+		shhwtstamps->hwtstamp = ns_to_ktime(timestamp);
+
+	dequeue:
+		netif_rx_ni(skb);
+		skb = skb_dequeue(&private->rx_skb_queue);
 	}
-	*/
-
-	//schedule_delayed_work(&priv->fifo_read_work_delayed, usecs_to_jiffies(POLL_INTERVAL_USECS));
-	
-	/*
-	int err = request_threaded_irq(gpio_to_irq(41), bcm54210pe_handle_interrupt, bcm54210pe_handle_interrupt_thread,
-								IRQF_ONESHOT | IRQF_SHARED,
-								phydev_name(phydev), phydev);
-	*/
-
-/*
-	return; 
 }
-*/
 
-static void bcm54210pe_run_tx_timestamp_thread(struct work_struct *w)
+static void bcm54210pe_run_tx_timestamp_match_thread(struct work_struct *w)
 {
 	struct bcm54210pe_private *private =
 		container_of(w, struct bcm54210pe_private, txts_work);
 
 	struct skb_shared_hwtstamps *shhwtstamps;
 	struct sk_buff *skb;
-	struct bcm54210pe_circular_buffer_item *item;
-	struct list_head *this, *next;
-	struct bcm54210_skb_info *skb_info;
 
 	struct ptp_header *hdr;
 	u8 msg_type;
 	u16 sequence_id;
+	u64 timestamp;
 	int x;
 
+	timestamp = 0;
 	skb = skb_dequeue(&private->tx_skb_queue);
-
-	// If on first stab we've got no work, then just return
-	//if (skb == NULL) {
-	//	return;
-	//}
-
-	u64 timestamp = 0;
 
 	while (skb != NULL) {
 		int type = ptp_classify_raw(skb);
@@ -386,14 +341,16 @@ static void bcm54210pe_run_tx_timestamp_thread(struct work_struct *w)
 		for (x = 0; x < 10; x++) {
 			bcm54210pe_read_sop_time_register(private);
 			if (bcm54210pe_fetch_timestamp(1, msg_type, sequence_id,
-						       priv, &timestamp)) {
+						       private, &timestamp)) {
 				break;
 			}
 			udelay(private->fib_sequence[x] * private->fib_factor_tx);
+			//mdelay(1);
 		}
 		shhwtstamps = skb_hwtstamps(skb);
 
 		if (!shhwtstamps) {
+			kfree_skb(skb);
 			goto dequeue;
 		}
 
@@ -403,7 +360,7 @@ static void bcm54210pe_run_tx_timestamp_thread(struct work_struct *w)
 		skb_complete_tx_timestamp(skb, shhwtstamps);
 
 	dequeue:
-		skb = skb_dequeue(&priv->tx_skb_queue);
+		skb = skb_dequeue(&private->tx_skb_queue);
 	}
 }
 
@@ -439,7 +396,8 @@ irqreturn_t bcm54210pe_handle_interrupt(int irq, void * phy_dat)
 	
 	//////////////////////////////////////////////////////////////
 	
-	
+
+	/*
 	struct phy_device *phydev = phy_dat;
 	struct phy_driver *drv = phydev->drv;
 
@@ -453,6 +411,7 @@ irqreturn_t bcm54210pe_handle_interrupt(int irq, void * phy_dat)
 
 	if (phydev->drv->ack_interrupt)
 		phydev->drv->ack_interrupt(phydev);
+	*/
 
 	// did_interrupt() may have cleared the interrupt already
 	//if (phy_clear_interrupt(phydev)) {
@@ -464,15 +423,12 @@ irqreturn_t bcm54210pe_handle_interrupt(int irq, void * phy_dat)
 	  bcm54210pe_get_fifo(phydev);*/
   
 	//phy_clear_interrupt(phydev);
-	return IRQ_WAKE_THREAD;
+	//return IRQ_WAKE_THREAD;
 }
 
 static int bcm54210pe_config_1588(struct phy_device *phydev)
 {
 	int err;
-	u16 aux = 0xFFFF;
-
-	//err = 0;
 
 	err = bcm_phy_write_exp(phydev, PTP_INTERRUPT_REG, 0x3c02 );
 
@@ -516,14 +472,15 @@ static int bcm54210pe_gettimex(struct ptp_clock_info *info,
 {
 
 	struct bcm54210pe_ptp *ptp = container_of(info, struct bcm54210pe_ptp, caps);
-	struct phy_device *phydev = ptp->chosen->phydev;
 	return bcm54210pe_get80bittime(ptp->chosen, ts, sts);
 }
 
 // Must be called under clock_lock
 static void bcm54210pe_read80bittime_register(struct phy_device *phydev, u64 *time_stamp_80, u64 *time_stamp_48)
 {
-	u16 Time[5] = {0,0,0,0,0};
+	u16 Time[5];
+	u64 ts[3];
+	u64 cumulative;
 
 	bcm_phy_write_exp(phydev, CTR_DBG_REG, 0x400);
 	Time[4] = bcm_phy_read_exp(phydev, HEART_BEAT_REG4);
@@ -540,13 +497,12 @@ static void bcm54210pe_read80bittime_register(struct phy_device *phydev, u64 *ti
 
 	if (time_stamp_48 != NULL) {
 
-		u64 ts[3];
 
 		ts[2] = (((u64)Time[2]) << 32);
 		ts[1] = (((u64)Time[1]) << 16);
 		ts[0] = ((u64)Time[0]);
 
-		u64 cumulative = 0;
+		cumulative = 0;
 		cumulative |= ts[0];
 		cumulative |= ts[1];
 		cumulative |= ts[2];
@@ -558,7 +514,9 @@ static void bcm54210pe_read80bittime_register(struct phy_device *phydev, u64 *ti
 // Must be called under clock_lock
 static void bcm54210pe_read48bittime_register(struct phy_device *phydev, u64 *time_stamp)
 {
-	u16 Time[3] = {0,0,0};
+	u16 Time[3];
+	u64 ts[3];
+	u64 cumulative;
 
 	// Heartbeat register selection. Latch 80 bit Original time coude counter into Heartbeat register
 	// (this is undocumented)
@@ -573,13 +531,12 @@ static void bcm54210pe_read48bittime_register(struct phy_device *phydev, u64 *ti
 	bcm_phy_write_exp(phydev, CTR_DBG_REG, 0x800);
 	bcm_phy_write_exp(phydev, CTR_DBG_REG, 0x000);
 
-	u64 ts[3];
 
 	ts[2] = (((u64)Time[2]) << 32);
 	ts[1] = (((u64)Time[1]) << 16);
 	ts[0] = ((u64)Time[0]);
 
-	u64 cumulative = 0;
+	cumulative = 0;
 	cumulative |= ts[0];
 	cumulative |= ts[1];
 	cumulative |= ts[2];
@@ -591,18 +548,17 @@ static int bcm54210pe_get80bittime(struct bcm54210pe_private *private,
 				   struct timespec64 *ts,
 				   struct ptp_system_timestamp *sts)
 {
-	u16 Time[5] = {0,0,0,0,0};
-	
-	struct phy_device *phydev = private->phydev;
-
+	struct phy_device *phydev;
 	u16 nco_6_register_value;
-	int i, err;
+	int i;
 	u64 time_stamp_48, time_stamp_80, control_ts;
+
+	phydev = private->phydev;
 
 	// Capture timestamp on next framesync
 	nco_6_register_value = 0x2000;
 
-
+	// Lock
 	mutex_lock(&private->clock_lock);
 
 	// We share frame sync events with extts, so we need to ensure no event has occurred as we are about to boot the registers, so....
@@ -617,7 +573,7 @@ static int bcm54210pe_get80bittime(struct bcm54210pe_private *private,
 		bcm54210pe_read48bittime_register(phydev, &control_ts);
 
 		// If it matches neither the last gettime or extts timestamp
-		if (control_ts != private->last_extts_ts && control_ts != private->last_immediate_ts) {
+		if (control_ts != private->last_extts_ts && control_ts != private->last_immediate_ts[0]) { // FIXME: This is a bug
 
 			// Odds are this is a extts not yet logged as an event
 			printk("extts triggered by get80bittime\n");
@@ -658,16 +614,19 @@ static int bcm54210pe_get80bittime(struct bcm54210pe_private *private,
 		}
 	}
 
+	// Convert to timespec64
 	ns_to_ts(time_stamp_80, ts);
-
-	private->last_immediate_ts[0] = time_stamp_48;
-	private->last_immediate_ts[1] = time_stamp_80;
-
-	printk("Committing (extts:gettime) 48: %llu\n", time_stamp_48);
-	printk("Committing (extts:gettime) 80: %llu\n", time_stamp_80);
 
 	// If we are using extts
 	if(private->extts_en) {
+
+		// Commit last timestamp
+	   	private->last_immediate_ts[0] = time_stamp_48;
+	    	private->last_immediate_ts[1] = time_stamp_80;
+
+		// Debug
+		printk("Committing (extts:gettime) 48: %llu\n", time_stamp_48);
+		printk("Committing (extts:gettime) 80: %llu\n", time_stamp_80);
 
 		// Heartbeat register selection. Latch 48 bit Original time coude counter into Heartbeat register
 		// (this is undocumented)
@@ -693,7 +652,6 @@ static int bcm54210pe_gettime(struct ptp_clock_info *info, struct timespec64 *ts
 
 static int bcm54210pe_get48bittime(struct bcm54210pe_private *private, u64 *time_stamp)
 {
-	u16 Time[3] = { 0, 0, 0};
 	u16 nco_6_register_value;
 	int i, err;
 
@@ -736,12 +694,14 @@ static int bcm54210pe_settime(struct ptp_clock_info *info, const struct timespec
 {
 	u16 shadow_load_register, nco_6_register_value;
 	u16 original_time_codes[5], local_time_codes[3];
+	struct bcm54210pe_ptp *ptp;
+	struct phy_device *phydev;
+
+	ptp = container_of(info, struct bcm54210pe_ptp, caps);
+	phydev = ptp->chosen->phydev;
+
 	shadow_load_register = 0;
 	nco_6_register_value = 0;
-
-
-	struct bcm54210pe_ptp *ptp = container_of(info, struct bcm54210pe_ptp, caps);
-	struct phy_device *phydev = ptp->chosen->phydev;
 
 	// Assign original time codes (80 bit)
 	original_time_codes[4] = (u16) ((ts->tv_sec & 0x0000FFFF00000000) >> 32);
@@ -856,8 +816,6 @@ static int bcm54210pe_adjtime(struct ptp_clock_info *info, s64 delta)
 	struct timespec64 ts;
 	u64 now;
 
-	struct bcm54210pe_ptp *ptp = container_of(info, struct bcm54210pe_ptp, caps);
-
 	err = bcm54210pe_gettime(info, &ts);
 	if (err < 0)
 		return err;
@@ -960,7 +918,7 @@ static void bcm54210pe_trigger_extts_event(struct bcm54210pe_private *private, u
     	private->last_extts_ts = time_stamp;
 
 	ns_to_ts(time_stamp, &ts);
-	printk("Extts: %llu:%llu\n", ts.tv_sec, ts.tv_nsec);
+	printk("Extts: %llu:%li\n", ts.tv_sec, ts.tv_nsec);
 }
 
 static int bcm54210pe_perout_enable(struct bcm54210pe_private *private, s64 period, s64 pulsewidth, int enable)
@@ -1074,7 +1032,7 @@ static void bcm54210pe_run_perout_mode_one_thread(struct work_struct *perout_ws)
 {
 	struct bcm54210pe_private *private;
 	u64 local_time_stamp_48bits; //, local_time_stamp_80bits;
-	u64 next_event, time_before_next_pulse, period, pulsewidth;
+	u64 next_event, time_before_next_pulse, period;
 	u16 nco_6_register_value, pulsewidth_nco3_hack;
 	u64 wait_one, wait_two;
 
@@ -1151,8 +1109,18 @@ static void bcm54210pe_run_perout_mode_one_thread(struct work_struct *perout_ws)
 
 bool bcm54210pe_rxtstamp(struct mii_timestamper *mii_ts, struct sk_buff *skb, int type)
 {
-	struct skb_shared_hwtstamps *shhwtstamps = NULL;
 	struct bcm54210pe_private *private = container_of(mii_ts, struct bcm54210pe_private, mii_ts);
+
+	if (private->hwts_rx_en) {
+		skb_queue_tail(&private->rx_skb_queue, skb);
+		schedule_work(&private->rxts_work);
+		return true;
+	}
+
+	return false;
+
+	/*
+	struct skb_shared_hwtstamps *shhwtstamps = NULL;
 	struct ptp_header *hdr;
 	u8 msg_type;
 	u16 sequence_id;
@@ -1177,20 +1145,10 @@ bool bcm54210pe_rxtstamp(struct mii_timestamper *mii_ts, struct sk_buff *skb, in
 
 	timestamp = 0;
 
-	// Synchroniously collect timestamps - currently broken, but best approach
-	/*
-	bcm54210pe_read_sop_time_register(private);
-	if (!bcm54210pe_fetch_timestamp(0, msg_type, sequence_id, private, &timestamp)) {
-		return false;
-	}
-	*/
-
 	// Asynchronious approach - working, but poor approach
 	for(x = 0; x < 10; x++)
 	{
-		bcm54210pe_read_sop_time_register(private);
 		if (bcm54210pe_fetch_timestamp(0, msg_type, sequence_id, private, &timestamp)) {
-			printk("rx ts found on iteration %d\n", x);
 			break;
 		}
 
@@ -1204,21 +1162,23 @@ bool bcm54210pe_rxtstamp(struct mii_timestamper *mii_ts, struct sk_buff *skb, in
 		shhwtstamps->hwtstamp = ns_to_ktime(timestamp);
 	}
 
-	netif_rx_ni(skb);
+	//printk("in_interrupt(): %s\n", in_interrupt() ? "true" : "false");
+	netif_rx(skb);
 
 	return true;
+	*/
 }
 
 void bcm54210pe_txtstamp(struct mii_timestamper *mii_ts, struct sk_buff *skb, int type)
 {
-	struct bcm54210pe_private *device = container_of(mii_ts, struct bcm54210pe_private, mii_ts);
+	struct bcm54210pe_private *private = container_of(mii_ts, struct bcm54210pe_private, mii_ts);
 
-	switch (device->hwts_tx_en) 
+	switch (private->hwts_tx_en)
 	{
 		case HWTSTAMP_TX_ON:
 		{	
 			skb_shinfo(skb)->tx_flags |= SKBTX_IN_PROGRESS;
-			skb_queue_tail(&device->tx_skb_queue, skb);
+			skb_queue_tail(&private->tx_skb_queue, skb);
 			schedule_work(&private->txts_work);
 			break;
 		}
@@ -1260,7 +1220,6 @@ int bcm54210pe_hwtstamp(struct mii_timestamper *mii_ts, struct ifreq *ifr)
 	struct bcm54210pe_private *device = container_of(mii_ts, struct bcm54210pe_private, mii_ts);
 
 	struct hwtstamp_config cfg;
-	u16 txcfg0, rxcfg0;
 
 	if (copy_from_user(&cfg, ifr->ifr_data, sizeof(cfg)))
 		return -EFAULT;
@@ -1460,7 +1419,6 @@ static int bcm54210pe_sw_reset(struct phy_device *phydev)
 
 int bcm54210pe_probe(struct phy_device *phydev)
 {
-	int err = 0;
 	int x, y;
 	struct bcm54210pe_ptp *ptp;
         struct bcm54210pe_private *bcm54210pe;
@@ -1496,13 +1454,15 @@ int bcm54210pe_probe(struct phy_device *phydev)
 	phydev->mii_ts = &bcm54210pe->mii_ts;
 
 	// Initialisation of work_structs and similar
-	INIT_WORK(&bcm54210pe->txts_work, bcm54210pe_run_tx_timestamp_thread);
-	//INIT_DELAYED_WORK(&bcm54210pe->fifo_read_work_delayed, read_txrx_timestamp_thread);
+	INIT_WORK(&bcm54210pe->txts_work, bcm54210pe_run_tx_timestamp_match_thread);
+	INIT_WORK(&bcm54210pe->rxts_work, bcm54210pe_run_rx_timestamp_match_thread);
 	INIT_DELAYED_WORK(&bcm54210pe->perout_ws, bcm54210pe_run_perout_mode_one_thread);
 	INIT_DELAYED_WORK(&bcm54210pe->extts_ws, bcm54210pe_run_extts_thread);
 
+	// SKB queues
 	skb_queue_head_init(&bcm54210pe->tx_skb_queue);
-	
+	skb_queue_head_init(&bcm54210pe->rx_skb_queue);
+
 	for (x = 0; x < CIRCULAR_BUFFER_COUNT; x++)
 	{ 
 		INIT_LIST_HEAD(&bcm54210pe->circular_buffers[x]);
@@ -1527,7 +1487,18 @@ int bcm54210pe_probe(struct phy_device *phydev)
 	bcm54210pe->perout_mode = SYNC_OUT_MODE_1;
 
 	// Fibonacci RSewoke style progressive backoff scheme
-	bcm54210pe->fib_sequence = {1, 1, 2, 3, 5, 8, 13, 21, 34, 55};
+	bcm54210pe->fib_sequence[0] = 1;
+	bcm54210pe->fib_sequence[1] = 1;
+	bcm54210pe->fib_sequence[2] = 2;
+	bcm54210pe->fib_sequence[3] = 3;
+	bcm54210pe->fib_sequence[4] = 5;
+	bcm54210pe->fib_sequence[5] = 8;
+	bcm54210pe->fib_sequence[6] = 13;
+	bcm54210pe->fib_sequence[7] = 21;
+	bcm54210pe->fib_sequence[8] = 34;
+	bcm54210pe->fib_sequence[9] = 55;
+
+	//bcm54210pe->fib_sequence = {1, 1, 2, 3, 5, 8, 13, 21, 34, 55};
 	bcm54210pe->fib_factor_rx = 10;
 	bcm54210pe->fib_factor_tx = 10;
 
@@ -1553,6 +1524,7 @@ int bcm54210pe_probe(struct phy_device *phydev)
 	}
 
 	//schedule_delayed_work(&bcm54210pe->fifo_read_work_delayed, usecs_to_jiffies(100));
+	//schedule_delayed_work(&bcm54210pe->rxts_work, usecs_to_jiffies(1));
 
 	return 0;
 }

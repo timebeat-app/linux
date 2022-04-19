@@ -67,15 +67,17 @@ struct bcm54210pe_private {
 	u64 last_immediate_ts[2];
 
 	struct sk_buff_head tx_skb_queue;
-		
+	struct sk_buff_head rx_skb_queue;
+
 	struct bcm54210pe_circular_buffer_item	circular_buffer_items[CIRCULAR_BUFFER_COUNT][CIRCULAR_BUFFER_ITEM_COUNT];
 	struct list_head 						circular_buffers[CIRCULAR_BUFFER_COUNT];
 
-	struct work_struct txts_work;
+	struct work_struct txts_work, rxts_work;
 	struct delayed_work fifo_read_work_delayed, perout_ws, extts_ws;
 	struct mutex clock_lock, timestamp_buffer_lock;
 
 	int fib_sequence[10];
+
 	int fib_factor_rx;
 	int fib_factor_tx;
 
@@ -90,10 +92,10 @@ irqreturn_t bcm54210pe_handle_interrupt_thread(int irq, void *phy_dat);
 
 static bool bcm54210pe_rxtstamp(struct mii_timestamper *mii_ts, struct sk_buff *skb, int type);
 static void bcm54210pe_txtstamp(struct mii_timestamper *mii_ts, struct sk_buff *skb, int type);
-static bool bcm54210pe_fetch_timestamp(u8 txrx, u8 message_type, u16 seq_id, struct bcm54210pe_private *private, u64 *timestamp);
-static void bcm54210pe_run_tx_timestamp_thread(struct work_struct *w);
+static void bcm54210pe_run_rx_timestamp_match_thread(struct work_struct *w);
+static void bcm54210pe_run_tx_timestamp_match_thread(struct work_struct *w);
 static void bcm54210pe_read_sop_time_register(struct bcm54210pe_private *private);
-
+static bool bcm54210pe_fetch_timestamp(u8 txrx, u8 message_type, u16 seq_id, struct bcm54210pe_private *private, u64 *timestamp);
 
 static u16 bcm54210pe_get_base_nco6_reg(struct bcm54210pe_private *private, u16 val, bool do_nse_init);
 static int bcm54210pe_interrupts_enable(struct phy_device *phydev, bool fsync_en, bool sop_en);
