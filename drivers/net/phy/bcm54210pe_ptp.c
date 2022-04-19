@@ -575,7 +575,7 @@ static int bcm54210pe_get80bittime(struct bcm54210pe_private *private,
 		if (control_ts != private->last_extts_ts && control_ts != private->last_immediate_ts[0]) { // FIXME: This is a bug
 
 			// Odds are this is a extts not yet logged as an event
-			printk("extts triggered by get80bittime\n");
+			//printk("extts triggered by get80bittime\n");
 			bcm54210pe_trigger_extts_event(private, control_ts);
 		}
 	}
@@ -624,8 +624,8 @@ static int bcm54210pe_get80bittime(struct bcm54210pe_private *private,
 	    	private->last_immediate_ts[1] = time_stamp_80;
 
 		// Debug
-		printk("Committing (extts:gettime) 48: %llu\n", time_stamp_48);
-		printk("Committing (extts:gettime) 80: %llu\n", time_stamp_80);
+		//printk("Committing (extts:gettime) 48: %llu\n", time_stamp_48);
+		//printk("Committing (extts:gettime) 80: %llu\n", time_stamp_80);
 
 		// Heartbeat register selection. Latch 48 bit Original time coude counter into Heartbeat register
 		// (this is undocumented)
@@ -886,8 +886,8 @@ static void bcm54210pe_run_extts_thread(struct work_struct *extts_ws)
 	    private->last_immediate_ts[0] != time_stamp_48 &&
 	    private->last_immediate_ts[1] != time_stamp_80) {
 
-		printk("extts triggered by extts thread\n");
-		printk("Committing (extts:trigger): %llu\n", time_stamp_48);
+		//printk("extts triggered by extts thread\n");
+		//printk("Committing (extts:trigger): %llu\n", time_stamp_48);
 
 		bcm_phy_write_exp(phydev, NSE_DPPL_NCO_6_REG, 0xE000);
 		bcm54210pe_trigger_extts_event(private, time_stamp_48);
@@ -917,14 +917,14 @@ static void bcm54210pe_trigger_extts_event(struct bcm54210pe_private *private, u
     	private->last_extts_ts = time_stamp;
 
 	ns_to_ts(time_stamp, &ts);
-	printk("Extts: %llu:%li\n", ts.tv_sec, ts.tv_nsec);
+	//printk("Extts: %llu:%li\n", ts.tv_sec, ts.tv_nsec);
 }
 
 static int bcm54210pe_perout_enable(struct bcm54210pe_private *private, s64 period, s64 pulsewidth, int enable)
 {
-	int err;
 	struct phy_device *phydev;
 	u16 nco_6_register_value, frequency_hi, frequency_lo, pulsewidth_reg, pulse_start_hi, pulse_start_lo;
+	int err;
 
 	phydev = private->phydev;
 
@@ -967,6 +967,8 @@ static int bcm54210pe_perout_enable(struct bcm54210pe_private *private, s64 peri
 				private->perout_en = true;
 				schedule_delayed_work(&private->perout_ws, msecs_to_jiffies(1));
 			}
+
+			err = 0;
 
 		} else if (private->perout_mode == SYNC_OUT_MODE_2) {
 
@@ -1249,6 +1251,7 @@ static int bcm54210pe_feature_enable(struct ptp_clock_info *info, struct ptp_clo
 		if (req->perout.flags & ~PTP_PEROUT_DUTY_CYCLE) {
 			return -EOPNOTSUPP;
 		}
+
 		// Check if a specific pulsewidth is set
 		if ((req->perout.flags & PTP_PEROUT_DUTY_CYCLE) > 0) {
 
@@ -1276,7 +1279,6 @@ static int bcm54210pe_feature_enable(struct ptp_clock_info *info, struct ptp_clo
 		if (period != 0 && period < 16) {
 			return -ERANGE;
 		}
-
 
 		return bcm54210pe_perout_enable(ptp->chosen, period, pulsewidth, on);
 
@@ -1488,6 +1490,14 @@ static u16 bcm54210pe_get_base_nco6_reg(struct bcm54210pe_private *private, u16 
 
 	if (private->extts_en) {
 		val |= 0x2004;
+	}
+
+	if(private->perout_en) {
+		if (private->perout_mode == SYNC_OUT_MODE_1) {
+			val |= 0x0001;
+		} else if (private->perout_mode == SYNC_OUT_MODE_2) {
+			val |= 0x0002;
+		}
 	}
 
 	return val;
