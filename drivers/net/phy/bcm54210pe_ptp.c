@@ -2,11 +2,10 @@
 /*
  *  drivers/net/phy/bcm54210pe_ptp.c
  *
- * PTP module for BCM54210PE
+ * IEEE1588 (PTP), perout and extts for BCM54210PE PHY
  *
  * Authors: Carlos Fernandez, Kyle Judd, Lasse Johnsen
  * License: GPL
- * Copyright (C) 2021 Technica-Electronics GmbH
  */
 
 #include <linux/gpio/consumer.h>
@@ -1118,55 +1117,6 @@ bool bcm54210pe_rxtstamp(struct mii_timestamper *mii_ts, struct sk_buff *skb, in
 	}
 
 	return false;
-
-	/*
-	struct skb_shared_hwtstamps *shhwtstamps = NULL;
-	struct ptp_header *hdr;
-	u8 msg_type;
-	u16 sequence_id;
-	u64 timestamp;
-	int x;
-
-	if (!private->hwts_rx_en)
-	{
-		return false;
-	}
-
-
-	hdr = ptp_parse_header(skb, type);
-
-	if (hdr == NULL)
-	{
-		return false;
-	}
-
-	msg_type = ptp_get_msgtype(hdr, type);
-	sequence_id = be16_to_cpu(hdr->sequence_id);
-
-	timestamp = 0;
-
-	// Asynchronious approach - working, but poor approach
-	for(x = 0; x < 10; x++)
-	{
-		if (bcm54210pe_fetch_timestamp(0, msg_type, sequence_id, private, &timestamp)) {
-			break;
-		}
-
-		udelay(private->fib_sequence[x] * private->fib_factor_rx);
-	}
-
-	shhwtstamps = skb_hwtstamps(skb);
-	if (shhwtstamps)
-	{
-		memset(shhwtstamps, 0, sizeof(*shhwtstamps));
-		shhwtstamps->hwtstamp = ns_to_ktime(timestamp);
-	}
-
-	//printk("in_interrupt(): %s\n", in_interrupt() ? "true" : "false");
-	netif_rx(skb);
-
-	return true;
-	*/
 }
 
 void bcm54210pe_txtstamp(struct mii_timestamper *mii_ts, struct sk_buff *skb, int type)
@@ -1480,7 +1430,6 @@ int bcm54210pe_probe(struct phy_device *phydev)
 	mutex_init(&bcm54210pe->timestamp_buffer_lock);
 
 	// Features
-	bcm54210pe->ts_capture = true;
 	bcm54210pe->one_step = false;
 	bcm54210pe->extts_en = false;
 	bcm54210pe->perout_en = false;
@@ -1522,9 +1471,6 @@ int bcm54210pe_probe(struct phy_device *phydev)
 	if (IS_ERR(bcm54210pe->ptp->ptp_clock)) {
                         return PTR_ERR(bcm54210pe->ptp->ptp_clock);
 	}
-
-	//schedule_delayed_work(&bcm54210pe->fifo_read_work_delayed, usecs_to_jiffies(100));
-	//schedule_delayed_work(&bcm54210pe->rxts_work, usecs_to_jiffies(1));
 
 	return 0;
 }

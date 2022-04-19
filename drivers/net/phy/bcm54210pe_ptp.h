@@ -2,21 +2,19 @@
 /*
  *  drivers/net/phy/bcm54210pe_ptp.h
  *
- * PTP for BCM54210PE header file
+* IEEE1588 (PTP), perout and extts for BCM54210PE PHY
  *
  * Authors: Carlos Fernandez, Kyle Judd, Lasse Johnsen
  * License: GPL
- * Copyright (C) 2021 Technica-Electronics GmbH
  */
 
-
-#include <linux/ptp_clock_kernel.h>                                                                  
+#include <linux/ptp_clock_kernel.h>
 #include <linux/list.h>
 
-#define CIRCULAR_BUFFER_COUNT		8
-#define CIRCULAR_BUFFER_ITEM_COUNT	32
+#define CIRCULAR_BUFFER_COUNT 8
+#define CIRCULAR_BUFFER_ITEM_COUNT 32
 
-#define SYNC_IN_PIN  0
+#define SYNC_IN_PIN 0
 #define SYNC_OUT_PIN 1
 
 #define SYNC_OUT_MODE_1 1
@@ -31,19 +29,16 @@ struct bcm54210pe_ptp {
 	struct bcm54210pe_private *chosen;
 };
 
-struct bcm54210pe_circular_buffer_item
-{
+struct bcm54210pe_circular_buffer_item {
 	struct list_head list;
-	
+
 	u8 msg_type;
 	u16 sequence_id;
 	u64 time_stamp;
 	bool is_valid;
 };
 
-
 struct bcm54210pe_private {
-	
 	struct phy_device *phydev;
 	struct bcm54210pe_ptp *ptp;
 	struct mii_timestamper mii_ts;
@@ -52,16 +47,15 @@ struct bcm54210pe_private {
 	int ts_tx_config;
 	int tx_rx_filter;
 
-	bool ts_capture;
 	bool one_step;
 	bool perout_en;
 	bool extts_en;
 
-	int  second_on_set;
+	int second_on_set;
 
-	int  perout_mode;
-	int  perout_period;
-	int  perout_pulsewidth;
+	int perout_mode;
+	int perout_period;
+	int perout_pulsewidth;
 
 	u64 last_extts_ts;
 	u64 last_immediate_ts[2];
@@ -69,11 +63,13 @@ struct bcm54210pe_private {
 	struct sk_buff_head tx_skb_queue;
 	struct sk_buff_head rx_skb_queue;
 
-	struct bcm54210pe_circular_buffer_item	circular_buffer_items[CIRCULAR_BUFFER_COUNT][CIRCULAR_BUFFER_ITEM_COUNT];
-	struct list_head 						circular_buffers[CIRCULAR_BUFFER_COUNT];
+	struct bcm54210pe_circular_buffer_item
+		circular_buffer_items[CIRCULAR_BUFFER_COUNT]
+				     [CIRCULAR_BUFFER_ITEM_COUNT];
+	struct list_head circular_buffers[CIRCULAR_BUFFER_COUNT];
 
 	struct work_struct txts_work, rxts_work;
-	struct delayed_work fifo_read_work_delayed, perout_ws, extts_ws;
+	struct delayed_work perout_ws, extts_ws;
 	struct mutex clock_lock, timestamp_buffer_lock;
 
 	int fib_sequence[10];
