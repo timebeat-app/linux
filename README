@@ -76,19 +76,7 @@ Save config and exit.
 
 6) Copy necessary files to boot directory
 
-*** For UBUNTU, boot directory is /boot/firmware, NOT boot 
-
-	sudo cp arch/arm/boot/dts/*.dtb /boot/firmware/
-	sudo cp arch/arm/boot/dts/overlays/*.dtb* /boot/firmware/overlays/
-	sudo cp arch/arm/boot/dts/overlays/README /boot/firmware/overlays/
-	sudo cp arch/arm/boot/zImage /boot/firmware/$KERNEL.img
-
-*** For non-UBUNTU builds, use the commands below
-
-	sudo cp arch/arm/boot/dts/*.dtb /boot/
-	sudo cp arch/arm/boot/dts/overlays/*.dtb* /boot/overlays/
-	sudo cp arch/arm/boot/dts/overlays/README /boot/overlays/
-	sudo cp arch/arm/boot/zImage /boot/$KERNEL.img
+	sudo cp arch/arm64/boot/Image /boot/$KERNEL.img
 
 7) Reboot Raspberry PI
 
