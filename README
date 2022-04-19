@@ -39,7 +39,7 @@ ______________________________________________________________________
 
 2) git-clone (download) source code
 
-	git clone -b cm4-ptp-kylejudd https://github.com/KyleJudd/linux.git --depth 1
+	git clone -b bcm54210-1588 https://github.com/timebeat-app/linux.git --depth 1
 
 3) Configure kernel build environment
 
