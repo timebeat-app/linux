@@ -181,6 +181,7 @@ EXPORT_SYMBOL_GPL(bcm_phy_ack_intr);
 
 int bcm_phy_config_intr(struct phy_device *phydev)
 {
+
 	int reg;
 
 	reg = phy_read(phydev, MII_BCM54XX_ECR);

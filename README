@@ -1,3 +1,90 @@
+
+This is a kernel build with a PHY driver for the Raspberry PI CM4
+The purpose is to enable PTP features for the built-in NIC.
+It must be compiled before use, and this will take a VERY long time,
+4+ hours or more. That process can not be paused, so plan ahead.
+
+Current status : 
+
+ - The overall status is "under development" or "experimental" 
+ - The driver is stable, i.e. it shouldn't crash the operating system
+ - Timestamping features work, but other features do not.
+ - Missing features prevent most PTP apps from working properly. 
+
+******** This code is NOT error free and could cause unknown damage to :
+	- the Operating System or files on the CM4
+	- the CM4 hardware,
+	- devices connected to or near the CM4
+	- other items unknown.
+******** USE ONLY AT YOUR OWN RISK
+
+
+Install : (untested, first draft)
+
+This version is intended only for 64 bit versions operating systems 
+running on the Raspberry PI CM4. It is developed on Ubuntu 21.10 (64-bit).
+It may or may not work on other 64 bit operating systems.
+
+The steps below come from the instructions on :
+https://www.raspberrypi.com/documentation/computers/linux_kernel.html
+If the steps below fail, refer to that document for more info.
+
+______________________________________________________________________
+
+
+1) Install prerequisites
+
+	sudo apt install gcc g++ yasm make cmake
+	sudo apt install git bc bison flex libssl-dev make
+
+2) git-clone (download) source code
+
+	git clone -b cm4-ptp-kylejudd https://github.com/KyleJudd/linux.git
+
+3) Configure kernel build environment
+
+	cd linux
+	KERNEL=kernel8
+	make bcm2711_defconfig
+
+	sudo apt install libncurses5-dev
+	make menuconfig
+
+4) Configure kernel build options/flags
+
+The last command above should cause a GUI to appear. Use this GUI to 
+enable certain PTP/driver options.  This is necessary so that a .config
+file is generated with required options selected.  If this is not done properly,
+the code may not compile or function properly. Use instructions on screen or other
+online guides to learn how to use this app.
+
+after selecting options below, press "y" to enable. Make sure there is a "*" to the 
+left of the name, not "m".
+
+The necessary settings are (from the top page) :
+
+"Networking Support"->"Networking Options"->"Timestamping in PHY Devices"
+"Device Drivers"->"PTP clock support"
+"Device Drivers"->"PTP clock support"->"Add suport for ptp in bcm54210pe PHYs"
+
+Save config and exit.
+
+5) Build Kernel (This could take a VERY long time, 4+ hours or more)
+
+	make -j4 Image modules dtbs
+	sudo make modules_install
+
+6) Copy necessary files to boot directory
+
+	sudo cp arch/arm64/boot/Image /boot/$KERNEL.img
+
+7) Reboot Raspberry PI
+
+	sudo reboot now
+ 
+______________________________________________________________________
+
+
 Linux kernel
 ============
 

@@ -39,6 +39,8 @@
 
 #include <asm/unaligned.h>
 
+#include <linux/ptp_classify.h>
+
 #include "bcmgenet.h"
 
 /* Maximum number of hardware queues, downsized if needed */
@@ -70,6 +72,102 @@ static void bcmgenet_set_rx_mode(struct net_device *dev);
 static bool skip_umac_reset = false;
 module_param(skip_umac_reset, bool, 0444);
 MODULE_PARM_DESC(skip_umac_reset, "Skip UMAC reset step");
+
+//Kyle - These functions determine if incoming packets/skbs need to be passed to the phy driver for timestamping-MATCHING.
+//		 The main kernel code provides the function skb_tx_timestamp() function, which uses 
+//		 ptp_classify_raw() (/net/core/ptp_classifier.c) to do this, but there seems to be a glitch in ptp_classify_raw.
+//		 Even if that function worked correctly, it doesn't sort PTP SYNC/PDRQ messages from other messages. My solution
+//		 is to provide a local version of the kernel skb_tx_timestamp() function so that we can classify packets ourselves
+//		 and make sure they get passed to the phy driver.
+
+//Kyle - the issue with ptp_classify_raw() may be resolved with the skb->data/skb->mac fix. Should retest this.  Still need to filter specific message_types.
+
+static inline int classify_ptp_raw_local(struct sk_buff *skb)
+{
+	u8 *eth_payload;
+	
+	struct ethhdr *eth_header;
+	struct iphdr *ip_header;
+	struct udphdr *udp_header;
+
+	eth_header = eth_hdr(skb);
+
+	if(eth_header == NULL)
+	{ return 0; }
+
+	eth_payload = ((u8 *)eth_header) + ETH_HLEN;
+
+	if(eth_header->h_proto == htons(ETH_P_1588)) {
+		return eth_payload[1] == 2 ? PTP_CLASS_V2_L2 : 0;
+	} else if(eth_header->h_proto == htons(ETH_P_IP) || eth_header->h_proto == htons(ETH_P_IPV6)) {
+
+		ip_header = ip_hdr(skb);
+
+		if (ip_header->protocol == IPPROTO_UDP && (ntohs(ip_header->frag_off) & 0x1fff) == 0) {
+
+			udp_header = udp_hdr(skb);
+
+			if (udp_header->source == htons(PTP_EV_PORT) && udp_header->dest == htons(PTP_EV_PORT)) {
+
+				eth_payload += ip_header->ihl * 4; // (IP Payload) no of 32 bit words x 4 = number ip header  length in bytes
+				eth_payload += UDP_HLEN;           // (UDP Payload)
+
+				if (eth_payload[1] == PTP_CLASS_V1) {
+					return ip_header->version == 4 ? PTP_CLASS_V1_IPV4 : PTP_CLASS_V1_IPV6;
+				} else if (eth_payload[1] == PTP_CLASS_V2) {
+					return ip_header->version == 4 ? PTP_CLASS_V2_IPV4 : PTP_CLASS_V2_IPV6;
+				}
+
+				return 0;
+			}
+		}
+	}
+
+	return 0;
+}
+
+static inline void skb_tx_timestamp_local(struct sk_buff *skb)
+{
+	if( skb->dev != NULL && skb->dev->phydev != NULL && skb->dev->phydev->mii_ts != NULL )
+	{ 
+		int type = classify_ptp_raw_local(skb);
+		if(type != 0)
+		{
+			struct ptp_header *hdr = ptp_parse_header(skb, type);
+			
+			if( (hdr->tsmt & 0x0F) < 4)
+			{
+				skb_shinfo(skb)->tx_flags |= SKBTX_IN_PROGRESS;
+		
+				struct mii_timestamper *mii_ts = skb->dev->phydev->mii_ts;
+				struct sk_buff *clone = skb_clone_sk(skb);
+				if (clone == NULL)
+				{ return; }
+				
+				//K.J. - we need to make sure that the skb->data == skb->mac pointer before we send it back
+				//		 up the error queue. Other applications like gptp use the original packet data to 
+				//		 match sent packets with their timestamps. The bcmgenet driver may do skb_push and skb_pull
+				//	 	 operations that move the data ptr away from the mac ptr.  
+				//		 Applications that call	recvmsg(socket_id, &message_header, MSG_ERRQUEUE); to retreive timestamps
+				//		 will receive a copy of what skb->data points to as a copy of the "original packet data".  But the
+				//		 "original packet data" is really what skb->mac points to. The solution is to clone the skb and set
+				//		 skb->data back to skb->mac so that the application receives the proper start of the "original packet data".
+				
+				
+				int mac_offset = skb_mac_offset(clone);
+				skb_pull(clone, mac_offset);		
+				///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+				
+				
+				mii_ts->txtstamp(mii_ts, clone, type);
+				return;
+			}
+		}
+	}
+	
+	if (skb_shinfo(skb)->tx_flags & SKBTX_SW_TSTAMP)
+	{ skb_tstamp_tx(skb, NULL); }
+}
 
 static inline void bcmgenet_writel(u32 value, void __iomem *offset)
 {
@@ -2005,6 +2103,23 @@ static netdev_tx_t bcmgenet_xmit(struct sk_buff *skb, struct net_device *dev)
 	int ret;
 	int i;
 
+	//Kyle - This is a hack to fix issue where PHY is not timestamping version 2.1+ messages
+	//		 In original specs, first nibble was reserved, second nibble was 4-bit version #
+	//		 It seems that PHY will only timestamp packets if first nibble == 0, i.e. 0x01 or 0x02
+	//		 In newer specifications (IEEE 1588-2019 / IEEE 802.1AS-2020, the first nibble is 
+	//		 no longer reserverd, and is used as minor version, so 0x12 is valid and means version 2.1
+	//		 Linux applications like ptplinux/ptp4l use 2.1 version # which prevents PHY from timestamping
+	//		 outgoing packets.
+	//
+	//		 The temporary solution is to remove the first nibble minor version so PHY will timestamp TX packet.
+	
+	struct ethhdr *eth_header = eth_hdr(skb);
+	if(eth_header->h_proto == 0xf788)
+	{
+		u8 *data = (uint8_t *) skb_mac_header(skb);
+		data[15] = data[15] & 0x0F;
+	}
+	
 	index = skb_get_queue_mapping(skb);
 	/* Mapping strategy:
 	 * queue_mapping = 0, unclassified, packet xmited through ring16
@@ -2096,7 +2211,10 @@ static netdev_tx_t bcmgenet_xmit(struct sk_buff *skb, struct net_device *dev)
 	}
 
 	GENET_CB(skb)->last_cb = tx_cb_ptr;
-	skb_tx_timestamp(skb);
+	
+	//Kyle - Use local version above to avoid "classify-ing" problem in kernel.
+	skb_tx_timestamp_local(skb);
+	//skb_tx_timestamp(skb);
 
 	/* Decrement total BD count and advance our write pointer */
 	ring->free_bds -= nr_frags + 1;
