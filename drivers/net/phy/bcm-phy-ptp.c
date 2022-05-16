@@ -55,6 +55,7 @@
 #define TIME_CODE_4		0x0858
 
 #define DPLL_SELECT		0x085b
+#define  DPLL_HB_MODE1		0
 #define  DPLL_HB_MODE2			BIT(6)
 
 #define SHADOW_CTRL		0x085c
@@ -76,6 +77,14 @@
 #define NCO_TIME_2_CTRL		0x0877
 #define  FREQ_MDIO_SEL			BIT(14)
 
+#define SYNC_IN_DIVIDER		0x087b
+
+#define SYNC_IN_THRESHOLD	0x0880
+#define SYNC_IN_OFFSET		0x0881
+#define SYNC_IN_PIN0		2
+#define SYNC_IN_PIN1		3
+
+
 #define SYNC_OUT_0		0x0878
 #define SYNC_OUT_1		0x0879
 #define SYNC_OUT_2		0x087a
@@ -89,6 +98,7 @@
 #define  NSE_CAPTURE_EN			BIT(13)
 #define  NSE_INIT			BIT(12)
 #define  NSE_CPU_FRAMESYNC		BIT(5)
+#define  NSE_SYNC_IN_FRAMESYNC		BIT(SYNC_IN_PIN1)
 #define  NSE_FRAMESYNC_MASK		GENMASK(5, 2)
 #define  NSE_PEROUT_EN			BIT(1)
 #define  NSE_ONESHOT_EN			BIT(0)
@@ -123,6 +133,10 @@
 #define TIME_SYNC		0x0ff5
 #define  TIME_SYNC_EN			BIT(0)
 
+#define SYNC_IN_PIN                     0
+#define SYNC_OUT_PIN                    1
+
+
 struct bcm_ptp_private {
 	struct phy_device *phydev;
 	struct mii_timestamper mii_ts;
@@ -130,12 +144,14 @@ struct bcm_ptp_private {
 	struct ptp_clock_info ptp_info;
 	struct mutex mutex;
 	struct sk_buff_head tx_queue;
+	struct ptp_pin_desc sdp_config[2];
 	int tx_type;
 	bool hwts_rx;
 	u16 nse_ctrl;
 
-	struct delayed_work out_work;
-	bool fsync_out;
+	struct delayed_work out_work, in_work;
+	bool fsync_out, fsync_in;
+	u64 last_cpu_fsync_hb, last_sync_in_fsync_hb;
 };
 
 struct bcm_ptp_skb_cb {
@@ -201,17 +217,19 @@ static int bcm_ptp_framesync(struct phy_device *phydev,
 	return reg & INTC_FSYNC ? 0 : -ETIMEDOUT;
 }
 
-static int bcm_ptp_gettime_locked(struct bcm_ptp_private *priv,
-				  struct timespec64 *ts,
-				  struct ptp_system_timestamp *sts)
+static void bcm_ptp_set_latch_mode(struct phy_device *phydev,
+				   int latch_mode)
+{
+	bcm_phy_write_exp(phydev, DPLL_SELECT, latch_mode);
+
+}
+
+static void bcm_ptp_read_heartbeat_locked(struct bcm_ptp_private *priv,
+					  struct timespec64 *ts)
 {
 	struct phy_device *phydev = priv->phydev;
-	u16 hb[4];
-	int err;
 
-	err = bcm_ptp_framesync(phydev, sts, priv->nse_ctrl | NSE_CAPTURE_EN);
-	if (err)
-		return err;
+	u16 hb[4];
 
 	bcm_phy_write_exp(phydev, HB_STAT_CTRL, HB_READ_START);
 
@@ -225,6 +243,34 @@ static int bcm_ptp_gettime_locked(struct bcm_ptp_private *priv,
 
 	ts->tv_sec = (hb[3] << 16) | hb[2];
 	ts->tv_nsec = (hb[1] << 16) | hb[0];
+}
+
+static int bcm_ptp_gettime_locked(struct bcm_ptp_private *priv,
+				  struct timespec64 *ts,
+				  struct ptp_system_timestamp *sts)
+{
+	struct phy_device *phydev = priv->phydev;
+	int err;
+
+
+	if (priv->fsync_in) {
+		priv->nse_ctrl &= ~(NSE_FRAMESYNC_MASK | NSE_CAPTURE_EN);
+		bcm_phy_write_exp(phydev, NSE_CTRL, priv->nse_ctrl);
+	}
+
+	err = bcm_ptp_framesync(phydev, sts, priv->nse_ctrl | NSE_CAPTURE_EN);
+
+	if (priv->fsync_in) {
+		priv->nse_ctrl |= NSE_SYNC_IN_FRAMESYNC | NSE_CAPTURE_EN;
+		bcm_phy_write_exp(phydev, NSE_CTRL, priv->nse_ctrl);
+	}
+
+
+	if (err)
+		return err;
+
+	bcm_ptp_read_heartbeat_locked(priv, ts);
+	priv->last_cpu_fsync_hb =  timespec64_to_ns(ts);
 
 	return 0;
 }
@@ -248,6 +294,7 @@ static int bcm_ptp_settime_locked(struct bcm_ptp_private *priv,
 {
 	struct phy_device *phydev = priv->phydev;
 	u64 ns;
+	int err;
 
 	/* set up time code */
 	bcm_phy_write_exp(phydev, TIME_CODE_0, ts->tv_nsec);
@@ -266,7 +313,22 @@ static int bcm_ptp_settime_locked(struct bcm_ptp_private *priv,
 	bcm_phy_write_exp(phydev, SHADOW_LOAD, TIME_CODE_LOAD | NCO_TIME_LOAD);
 
 	/* must have NSE_INIT in order to write time code */
-	return bcm_ptp_framesync(phydev, NULL, priv->nse_ctrl | NSE_INIT);
+	//return bcm_ptp_framesync(phydev, NULL, priv->nse_ctrl | NSE_INIT);
+
+
+	if (priv->fsync_in) {
+		priv->nse_ctrl &= ~(NSE_FRAMESYNC_MASK | NSE_CAPTURE_EN);
+		bcm_phy_write_exp(phydev, NSE_CTRL, priv->nse_ctrl);
+	}
+
+	err = bcm_ptp_framesync(phydev, NULL, priv->nse_ctrl | NSE_INIT);
+
+	if (priv->fsync_in) {
+		priv->nse_ctrl |= NSE_SYNC_IN_FRAMESYNC | NSE_CAPTURE_EN;
+		bcm_phy_write_exp(phydev, NSE_CTRL, priv->nse_ctrl);
+	}
+
+	return err;
 }
 
 static int bcm_ptp_settime(struct ptp_clock_info *info,
@@ -508,6 +570,75 @@ static int bcm_ptp_fsync_locked(struct bcm_ptp_private *priv,
 	return 0;
 }
 
+static void bcm_ptp_trigger_extts_event(struct bcm_ptp_private *priv, u64 timestamp)
+{
+	struct ptp_clock_event event;
+
+	event.type = PTP_CLOCK_EXTTS;
+	event.timestamp = timestamp;
+	event.index = 0;
+
+	ptp_clock_event(priv->ptp_clock, &event);
+}
+
+static int bcm_ptp_extts(struct bcm_ptp_private *priv, int on)
+{
+	struct phy_device *phydev = priv->phydev;
+
+	mutex_lock(&priv->mutex);
+
+	if (on) {
+		priv->fsync_in = true;
+		priv->nse_ctrl |= NSE_SYNC_IN_FRAMESYNC | NSE_CAPTURE_EN;
+
+		bcm_phy_write_exp(phydev, SYNC_IN_DIVIDER, 0x0001);
+		bcm_phy_write_exp(phydev, SYNC_IN_THRESHOLD, 0x0100); // 0x0100);
+		bcm_phy_write_exp(phydev, SYNC_IN_OFFSET, 0x0200); // 0x0200);
+		bcm_phy_write_exp(phydev, NSE_CTRL, priv->nse_ctrl);
+
+		schedule_delayed_work(&priv->in_work, 0);
+	} else {
+		priv->fsync_in = false;
+		priv->nse_ctrl &= ~NSE_FRAMESYNC_MASK;
+		bcm_phy_write_exp(phydev, NSE_CTRL, priv->nse_ctrl);
+	}
+
+	mutex_unlock(&priv->mutex);
+
+	return 0;
+}
+
+static void bcm_ptp_extts_work(struct work_struct *in_work)
+{
+	u64 ns;
+	struct timespec64 ts;
+	struct bcm_ptp_private *priv =
+		container_of(in_work, struct bcm_ptp_private, in_work.work);
+
+	u64 interval = 10;	// ms
+
+	mutex_lock(&priv->mutex);
+
+	if (!priv->fsync_in) {
+		mutex_unlock(&priv->mutex);
+		return;
+	}
+
+	bcm_ptp_read_heartbeat_locked(priv, &ts);
+
+	ns = timespec64_to_ns(&ts);
+	if (priv->last_cpu_fsync_hb != ns && priv->last_sync_in_fsync_hb != ns) {
+		priv->last_sync_in_fsync_hb = ns;
+		bcm_ptp_trigger_extts_event(priv, ns);
+		priv->nse_ctrl |= NSE_SYNC_IN_FRAMESYNC | NSE_CAPTURE_EN;
+	}
+
+	mutex_unlock(&priv->mutex);
+
+	// Reschedule
+	schedule_delayed_work(&priv->in_work, msecs_to_jiffies(interval));
+}
+
 static bool bcm_ptp_rxtstamp(struct mii_timestamper *mii_ts,
 			     struct sk_buff *skb, int type)
 {
@@ -651,30 +782,81 @@ static int bcm_ptp_enable(struct ptp_clock_info *info,
 
 	switch (rq->type) {
 	case PTP_CLK_REQ_PEROUT:
+
+		if (priv->sdp_config[SYNC_OUT_PIN].func != PTP_PF_PEROUT)
+			return -EOPNOTSUPP;
+
+		if (priv->fsync_in && on) {
+			bcm_ptp_extts(priv, !on);
+		}
+
 		mutex_lock(&priv->mutex);
+
+
 		if (rq->perout.index == 0)
-			err = bcm_ptp_perout_locked(priv, &rq->perout, on);
-		else
 			err = bcm_ptp_fsync_locked(priv, &rq->perout, on);
+		else
+			err = bcm_ptp_perout_locked(priv, &rq->perout, on);
 		mutex_unlock(&priv->mutex);
 		break;
+
+	case PTP_CLK_REQ_EXTTS:
+
+
+		if (priv->fsync_out && on) {
+			mutex_lock(&priv->mutex);
+			bcm_ptp_perout_locked(priv, NULL, !on);
+			mutex_unlock(&priv->mutex);
+
+		}
+
+		if (priv->sdp_config[SYNC_IN_PIN].func != PTP_PF_EXTTS)
+			return -EOPNOTSUPP;
+
+		return bcm_ptp_extts(priv, on);
+
 	default:
 		return -EOPNOTSUPP;
 	}
 	return err;
 }
 
-static const struct ptp_clock_info bcm_ptp_clock_info = {
+static int bcm_ptp_verify(struct ptp_clock_info *info, unsigned int pin,
+			  enum ptp_pin_function func, unsigned int chan)
+{
+	switch (func) {
+	case PTP_PF_NONE:
+		return 0;
+	case PTP_PF_EXTTS:
+		if (pin == SYNC_IN_PIN)
+			return 0;
+		break;
+	case PTP_PF_PEROUT:
+		if (pin == SYNC_OUT_PIN)
+			return 0;
+		break;
+	case PTP_PF_PHYSYNC:
+		break;
+	}
+	return -1;
+}
+
+static struct ptp_clock_info bcm_ptp_clock_info = {
 	.owner		= THIS_MODULE,
 	.name		= KBUILD_MODNAME,
 	.max_adj	= 100000000,
+	.n_alarm	= 0,
+	.n_pins		= 2,
+	.n_ext_ts	= 1,
+	.n_per_out	= 1,
+	.pps		= 0,
 	.gettimex64	= bcm_ptp_gettimex,
 	.settime64	= bcm_ptp_settime,
 	.adjtime	= bcm_ptp_adjtime,
 	.adjfine	= bcm_ptp_adjfine,
 	.enable		= bcm_ptp_enable,
+	.verify		= bcm_ptp_verify,
 	.do_aux_work	= bcm_ptp_do_aux_work,
-	.n_per_out	= 2,
 };
 
 static void bcm_ptp_txtstamp(struct mii_timestamper *mii_ts,
@@ -809,7 +991,7 @@ void bcm_ptp_config_init(struct phy_device *phydev)
 	bcm_phy_write_exp(phydev, TIME_SYNC, TIME_SYNC_EN);
 
 	/* use sec.nsec heartbeat capture */
-	bcm_phy_write_exp(phydev, DPLL_SELECT, DPLL_HB_MODE2);
+	bcm_ptp_set_latch_mode(phydev, DPLL_HB_MODE2);
 
 	/* use 64 bit timecode for TX */
 	bcm_phy_write_exp(phydev, TIMECODE_CTRL, TX_TIMECODE_SEL);
@@ -834,12 +1016,14 @@ static void bcm_ptp_init(struct bcm_ptp_private *priv)
 	priv->phydev->mii_ts = &priv->mii_ts;
 
 	INIT_DELAYED_WORK(&priv->out_work, bcm_ptp_fsync_work);
+	INIT_DELAYED_WORK(&priv->in_work, bcm_ptp_extts_work);
 }
 
 struct bcm_ptp_private *bcm_ptp_probe(struct phy_device *phydev)
 {
 	struct bcm_ptp_private *priv;
 	struct ptp_clock *clock;
+	struct ptp_pin_desc *sync_in_pin_desc, *sync_out_pin_desc;
 
 	switch (BRCM_PHY_MODEL(phydev)) {
 	case PHY_ID_BCM54210E:
@@ -854,6 +1038,22 @@ struct bcm_ptp_private *bcm_ptp_probe(struct phy_device *phydev)
 	priv = devm_kzalloc(&phydev->mdio.dev, sizeof(*priv), GFP_KERNEL);
 	if (!priv)
 		return ERR_PTR(-ENOMEM);
+
+	// Pin config
+	sync_in_pin_desc = &priv->sdp_config[SYNC_IN_PIN];
+	snprintf(sync_in_pin_desc->name, sizeof(sync_in_pin_desc->name), "SYNC_IN");
+	sync_in_pin_desc->index = SYNC_IN_PIN;
+	sync_in_pin_desc->func = PTP_PF_NONE;
+
+	sync_out_pin_desc = &priv->sdp_config[SYNC_OUT_PIN];
+	snprintf(sync_out_pin_desc->name, sizeof(sync_out_pin_desc->name), "SYNC_OUT");
+	sync_out_pin_desc->index = SYNC_OUT_PIN;
+	sync_out_pin_desc->func = PTP_PF_NONE;
+
+	bcm_ptp_clock_info.pin_config = priv->sdp_config;
+
+	priv->fsync_in = false;
+	priv->fsync_out = false;
 
 	priv->ptp_info = bcm_ptp_clock_info;
 
