@@ -101,6 +101,16 @@ config BROADCOM_PHY
 	  Currently supports the BCM5411, BCM5421, BCM5461, BCM54616S, BCM5464,
 	  BCM5481, BCM54810 and BCM5482 PHYs.
 
+config BCM_NET_PHYPTP
+	tristate "Broadcom PHY PTP support"
+	depends on NETWORK_PHY_TIMESTAMPING
+	depends on PHYLIB
+	depends on PTP_1588_CLOCK
+	depends on BROADCOM_PHY
+	depends on NET_PTP_CLASSIFY
+	help
+	  Supports PTP timestamping for certain Broadcom PHYs.
+
 config BCM54140_PHY
 	tristate "Broadcom BCM54140 PHY"
 	depends on PHYLIB
